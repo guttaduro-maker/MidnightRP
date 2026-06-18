@@ -85,7 +85,11 @@ def controlla_utente(user_id):
             "fedina": [],
             "multe": 0,
             "ammanettato": False,
-            "sms_ricevuti": []
+            "sms_ricevuti": [],
+            "avvisi": 0,
+            "warn": 0,
+            "ban": False,
+            "storico_mod": []
         }
         salva_database()
     else:
@@ -93,7 +97,8 @@ def controlla_utente(user_id):
         chiavi_default = {
             "contanti": 500, "banca": 2500, "fedina": [], 
             "multe": 0, "ammanettato": False, "lavoro": "Disoccupato",
-            "sms_ricevuti": []
+            "sms_ricevuti": [], "avvisi": 0, "warn": 0, "ban": False,
+            "storico_mod": []
         }
         for k, v in chiavi_default.items():
             if k not in database[uid]:
@@ -114,8 +119,8 @@ async def invia_log(titolo, descrizione, colore=discord.Color.light_gray()):
         async with aiohttp.ClientSession() as session:
             webhook = discord.Webhook.from_url(LOG_WEBHOOK_URL, session=session)
             await webhook.send(embed=embed)
-    except Exception as e:
-        print(f"Impossibile inviare il log al webhook: {e}")
+    except Exception:
+        pass
 
 @bot.event
 async def on_ready():
@@ -837,34 +842,93 @@ async def mercato_rimuovi(interaction: discord.Interaction, oggetto: str):
     salva_database()
     await interaction.response.send_message(f"✅ Hai rimosso i tuoi annunci per **{oggetto}** e gli oggetti sono tornati nel tuo inventario.")
 
+class MercatoView(discord.ui.View):
+    def __init__(self, embed_creator, total_pages, timeout=180):
+        super().__init__(timeout=timeout)
+        self.embed_creator = embed_creator
+        self.current_page = 1
+        self.total_pages = total_pages
+        self.message = None
+        self.update_buttons()
+    
+    def update_buttons(self):
+        self.clear_items()
+        
+        back_button = discord.ui.Button(
+            label="◀️ Indietro", 
+            style=discord.ButtonStyle.gray,
+            disabled=self.current_page == 1
+        )
+        back_button.callback = self.go_back
+        self.add_item(back_button)
+        
+        page_button = discord.ui.Button(
+            label=f"📄 {self.current_page}/{self.total_pages}", 
+            style=discord.ButtonStyle.blurple,
+            disabled=True
+        )
+        self.add_item(page_button)
+        
+        next_button = discord.ui.Button(
+            label="Avanti ▶️", 
+            style=discord.ButtonStyle.gray,
+            disabled=self.current_page == self.total_pages
+        )
+        next_button.callback = self.go_next
+        self.add_item(next_button)
+    
+    async def go_back(self, interaction: discord.Interaction):
+        self.current_page -= 1
+        self.update_buttons()
+        embed = self.embed_creator(self.current_page)
+        await interaction.response.edit_message(embed=embed, view=self)
+    
+    async def go_next(self, interaction: discord.Interaction):
+        self.current_page += 1
+        self.update_buttons()
+        embed = self.embed_creator(self.current_page)
+        await interaction.response.edit_message(embed=embed, view=self)
+    
+    async def on_timeout(self):
+        if self.message:
+            try:
+                await self.message.edit(view=None)
+            except:
+                pass
+
 @bot.tree.command(name="mercato_lista", description="Mostra tutti gli annunci del mercato pubblico")
-async def mercato_lista(interaction: discord.Interaction, pagina: int = 1):
+async def mercato_lista(interaction: discord.Interaction):
     if not database["MERCATO"]:
         await interaction.response.send_message("🏪 Il mercato pubblico è vuoto al momento.", ephemeral=True)
         return
     
     val = database["SETTINGS"]["valuta"]
-    embed = discord.Embed(title="🏪 Mercato Pubblico di Los Santos", color=discord.Color.gold())
-    
     items_list = list(database["MERCATO"].items())
     items_per_page = 10
     total_pages = math.ceil(len(items_list) / items_per_page)
     
-    if pagina < 1 or pagina > total_pages:
-        await interaction.response.send_message(f"❌ Pagina non valida. Pagine disponibili: 1-{total_pages}", ephemeral=True)
-        return
+    def create_embed(page):
+        embed = discord.Embed(
+            title=f"🏪 Mercato Pubblico di Los Santos (Pagina {page}/{total_pages})", 
+            color=discord.Color.gold()
+        )
+        
+        start_idx = (page - 1) * items_per_page
+        end_idx = min(start_idx + items_per_page, len(items_list))
+        
+        for oggetto, annunci in items_list[start_idx:end_idx]:
+            testo = ""
+            for ann in annunci:
+                testo += f"• Venditore: **{ann['venditore_nome']}** | Prezzo: {ann['prezzo']}{val} | Qtà: {ann['quantita']}\n"
+            embed.add_field(name=f"📦 {oggetto.capitalize()}", value=testo, inline=False)
+        
+        embed.set_footer(text=f"Usa i bottoni qui sotto per navigare")
+        return embed
     
-    start_idx = (pagina - 1) * items_per_page
-    end_idx = min(start_idx + items_per_page, len(items_list))
-    
-    for oggetto, annunci in items_list[start_idx:end_idx]:
-        testo = ""
-        for ann in annunci:
-            testo += f"• Venditore: **{ann['venditore_nome']}** | Prezzo: {ann['prezzo']}{val} | Qtà: {ann['quantita']}\n"
-        embed.add_field(name=f"📦 {oggetto.capitalize()}", value=testo, inline=False)
-    
-    embed.set_footer(text=f"Pagina {pagina}/{total_pages} • Usa /mercato_lista pagina:<numero>")
-    await interaction.response.send_message(embed=embed)
+    embed = create_embed(1)
+    view = MercatoView(create_embed, total_pages)
+    await interaction.response.send_message(embed=embed, view=view)
+    view.message = await interaction.original_response()
 
 @bot.tree.command(name="proponi_vendita", description="Proponi a un giocatore specifico di comprare un tuo oggetto")
 @app_commands.describe(
@@ -1141,7 +1205,263 @@ async def confisca(interaction: discord.Interaction, utente: discord.User):
     )
 
 # ==========================================
-# 10. SISTEMA NEGOZIO (CON PAGINAZIONE)
+# 10. SISTEMA MODERAZIONE (AVVISI, WARN, BAN)
+# ==========================================
+
+@bot.tree.command(name="avviso", description="[STAFF] Dai un avviso a un giocatore")
+@app_commands.checks.has_permissions(moderate_members=True)
+@app_commands.describe(
+    utente="Il giocatore da avvisare",
+    motivo="Motivo dell'avviso"
+)
+async def avviso(interaction: discord.Interaction, utente: discord.User, motivo: str):
+    target_id = str(utente.id)
+    controlla_utente(target_id)
+    
+    timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    
+    database[target_id]["avvisi"] += 1
+    database[target_id]["storico_mod"].append(f"[{timestamp}] ⚠️ AVVISO {database[target_id]['avvisi']}/3: {motivo} - Moderatore: {interaction.user.display_name}")
+    
+    if database[target_id]["avvisi"] >= 3:
+        database[target_id]["avvisi"] = 0
+        database[target_id]["warn"] += 1
+        database[target_id]["storico_mod"].append(f"[{timestamp}] 🟡 WARN AUTOMATICO: 3 avvisi raggiunti - Moderatore: Sistema")
+    
+    salva_database()
+    
+    embed = discord.Embed(
+        title="⚠️ AVVISO",
+        description=f"**Giocatore:** {utente.mention}\n"
+                   f"**Avviso N°:** {database[target_id]['avvisi']}/3\n"
+                   f"**Motivo:** {motivo}\n"
+                   f"**Moderatore:** {interaction.user.mention}",
+        color=discord.Color.yellow()
+    )
+    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
+    
+    if database[target_id]["avvisi"] >= 3:
+        embed.add_field(name="⚠️ ATTENZIONE", value="3 avvisi raggiunti! È stato automaticamente applicato un WARN.", inline=False)
+    
+    await interaction.response.send_message(embed=embed)
+    
+    await invia_log(
+        "⚠️ Log Moderazione - Avviso", 
+        f"Il moderatore {interaction.user.mention} ha dato un avviso ({database[target_id]['avvisi']}/3) a {utente.mention}.\n**Motivo:** {motivo}", 
+        discord.Color.yellow()
+    )
+
+@bot.tree.command(name="warn", description="[STAFF] Dai un warn a un giocatore")
+@app_commands.checks.has_permissions(moderate_members=True)
+@app_commands.describe(
+    utente="Il giocatore da warnare",
+    motivo="Motivo del warn"
+)
+async def warn(interaction: discord.Interaction, utente: discord.User, motivo: str):
+    target_id = str(utente.id)
+    controlla_utente(target_id)
+    
+    timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    
+    database[target_id]["warn"] += 1
+    database[target_id]["storico_mod"].append(f"[{timestamp}] 🟡 WARN {database[target_id]['warn']}/3: {motivo} - Moderatore: {interaction.user.display_name}")
+    
+    if database[target_id]["warn"] >= 3:
+        database[target_id]["ban"] = True
+        database[target_id]["storico_mod"].append(f"[{timestamp}] 🔴 BAN AUTOMATICO: 3 warn raggiunti - Moderatore: Sistema")
+    
+    salva_database()
+    
+    embed = discord.Embed(
+        title="🟡 WARN",
+        description=f"**Giocatore:** {utente.mention}\n"
+                   f"**Warn N°:** {database[target_id]['warn']}/3\n"
+                   f"**Motivo:** {motivo}\n"
+                   f"**Moderatore:** {interaction.user.mention}",
+        color=discord.Color.orange()
+    )
+    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
+    
+    if database[target_id]["warn"] >= 3:
+        embed.add_field(name="🔴 BAN AUTOMATICO", value="3 warn raggiunti! Il giocatore è stato bannato automaticamente.", inline=False)
+    
+    await interaction.response.send_message(embed=embed)
+    
+    await invia_log(
+        "🟡 Log Moderazione - Warn", 
+        f"Il moderatore {interaction.user.mention} ha dato un warn ({database[target_id]['warn']}/3) a {utente.mention}.\n**Motivo:** {motivo}", 
+        discord.Color.orange()
+    )
+
+@bot.tree.command(name="ban", description="[STAFF] Banna un giocatore dal server RP")
+@app_commands.checks.has_permissions(ban_members=True)
+@app_commands.describe(
+    utente="Il giocatore da bannare",
+    motivo="Motivo del ban",
+    giorni="Giorni di ban (0 = permanente)"
+)
+async def ban(interaction: discord.Interaction, utente: discord.User, motivo: str, giorni: int = 0):
+    target_id = str(utente.id)
+    controlla_utente(target_id)
+    
+    timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    
+    database[target_id]["ban"] = True
+    
+    if giorni > 0:
+        database[target_id]["storico_mod"].append(f"[{timestamp}] 🔴 BAN {giorni} GIORNI: {motivo} - Moderatore: {interaction.user.display_name}")
+        tipo_ban = f"{giorni} giorni"
+    else:
+        database[target_id]["storico_mod"].append(f"[{timestamp}] ⚫ BAN PERMANENTE: {motivo} - Moderatore: {interaction.user.display_name}")
+        tipo_ban = "PERMANENTE"
+    
+    salva_database()
+    
+    embed = discord.Embed(
+        title="🔴 BAN",
+        description=f"**Giocatore:** {utente.mention}\n"
+                   f"**Tipo:** {tipo_ban}\n"
+                   f"**Motivo:** {motivo}\n"
+                   f"**Moderatore:** {interaction.user.mention}",
+        color=discord.Color.red()
+    )
+    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
+    
+    try:
+        if giorni > 0:
+            await utente.ban(reason=motivo, delete_message_days=1)
+        else:
+            await utente.ban(reason=motivo, delete_message_days=1)
+        embed.add_field(name="✅ Eseguito", value="Giocatore bannato dal server Discord.", inline=False)
+    except discord.Forbidden:
+        embed.add_field(name="⚠️ Attenzione", value="Impossibile bannare dal server Discord (permessi insufficienti).", inline=False)
+    except Exception as e:
+        embed.add_field(name="⚠️ Errore", value=f"Errore durante il ban: {e}", inline=False)
+    
+    await interaction.response.send_message(embed=embed)
+    
+    await invia_log(
+        "🔴 Log Moderazione - Ban", 
+        f"Il moderatore {interaction.user.mention} ha bannato {utente.mention} ({tipo_ban}).\n**Motivo:** {motivo}", 
+        discord.Color.red()
+    )
+
+@bot.tree.command(name="rimuovi_avvisi", description="[STAFF] Rimuove tutti gli avvisi di un giocatore")
+@app_commands.checks.has_permissions(moderate_members=True)
+@app_commands.describe(
+    utente="Il giocatore a cui rimuovere gli avvisi"
+)
+async def rimuovi_avvisi(interaction: discord.Interaction, utente: discord.User):
+    target_id = str(utente.id)
+    controlla_utente(target_id)
+    
+    vecchi_avvisi = database[target_id]["avvisi"]
+    database[target_id]["avvisi"] = 0
+    
+    timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    database[target_id]["storico_mod"].append(f"[{timestamp}] ✅ AVVISI RIMOSSI - Moderatore: {interaction.user.display_name}")
+    
+    salva_database()
+    
+    await interaction.response.send_message(f"✅ Rimossi **{vecchi_avvisi}** avvisi da {utente.mention}.")
+    
+    await invia_log(
+        "✅ Log Moderazione - Avvisi Rimossi", 
+        f"Il moderatore {interaction.user.mention} ha rimosso tutti gli avvisi ({vecchi_avvisi}) da {utente.mention}.", 
+        discord.Color.green()
+    )
+
+@bot.tree.command(name="rimuovi_warn", description="[STAFF] Rimuove tutti i warn di un giocatore")
+@app_commands.checks.has_permissions(moderate_members=True)
+@app_commands.describe(
+    utente="Il giocatore a cui rimuovere i warn"
+)
+async def rimuovi_warn(interaction: discord.Interaction, utente: discord.User):
+    target_id = str(utente.id)
+    controlla_utente(target_id)
+    
+    vecchi_warn = database[target_id]["warn"]
+    database[target_id]["warn"] = 0
+    
+    timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    database[target_id]["storico_mod"].append(f"[{timestamp}] ✅ WARN RIMOSSI - Moderatore: {interaction.user.display_name}")
+    
+    salva_database()
+    
+    await interaction.response.send_message(f"✅ Rimossi **{vecchi_warn}** warn da {utente.mention}.")
+    
+    await invia_log(
+        "✅ Log Moderazione - Warn Rimossi", 
+        f"Il moderatore {interaction.user.mention} ha rimosso tutti i warn ({vecchi_warn}) da {utente.mention}.", 
+        discord.Color.green()
+    )
+
+@bot.tree.command(name="rimuovi_ban", description="[STAFF] Rimuove il ban di un giocatore")
+@app_commands.checks.has_permissions(ban_members=True)
+@app_commands.describe(
+    utente="Il giocatore da sbannare"
+)
+async def rimuovi_ban(interaction: discord.Interaction, utente: discord.User):
+    target_id = str(utente.id)
+    controlla_utente(target_id)
+    
+    database[target_id]["ban"] = False
+    
+    timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    database[target_id]["storico_mod"].append(f"[{timestamp}] ✅ BAN RIMOSSO - Moderatore: {interaction.user.display_name}")
+    
+    salva_database()
+    
+    try:
+        await interaction.guild.unban(utente)
+        msg = f"✅ Ban rimosso per {utente.mention}. Giocatore sbannato dal server Discord."
+    except discord.NotFound:
+        msg = f"✅ Ban rimosso per {utente.mention}. Il giocatore non era bannato da Discord."
+    except discord.Forbidden:
+        msg = f"✅ Ban rimosso per {utente.mention}. Impossibile sbannare da Discord (permessi insufficienti)."
+    
+    await interaction.response.send_message(msg)
+    
+    await invia_log(
+        "✅ Log Moderazione - Ban Rimosso", 
+        f"Il moderatore {interaction.user.mention} ha rimosso il ban di {utente.mention}.", 
+        discord.Color.green()
+    )
+
+@bot.tree.command(name="stato_mod", description="[STAFF] Visualizza lo stato moderazione di un giocatore")
+@app_commands.checks.has_permissions(moderate_members=True)
+@app_commands.describe(
+    utente="Il giocatore di cui vedere lo stato"
+)
+async def stato_mod(interaction: discord.Interaction, utente: discord.User):
+    target_id = str(utente.id)
+    controlla_utente(target_id)
+    
+    data = database[target_id]
+    
+    embed = discord.Embed(
+        title=f"📋 Stato Moderazione: {utente.display_name}",
+        color=discord.Color.blue()
+    )
+    
+    avvisi_emoji = "🟢" if data["avvisi"] == 0 else "🟡" if data["avvisi"] < 3 else "🔴"
+    warn_emoji = "🟢" if data["warn"] == 0 else "🟡" if data["warn"] < 3 else "🔴"
+    ban_emoji = "🟢" if not data["ban"] else "🔴"
+    
+    embed.add_field(name=f"{avvisi_emoji} Avvisi", value=f"**{data['avvisi']}/3**", inline=True)
+    embed.add_field(name=f"{warn_emoji} Warn", value=f"**{data['warn']}/3**", inline=True)
+    embed.add_field(name=f"{ban_emoji} Ban", value=f"**{'Sì' if data['ban'] else 'No'}**", inline=True)
+    
+    if data["storico_mod"]:
+        storico = "\n".join(data["storico_mod"][-10:])
+        embed.add_field(name="📜 Ultime azioni (max 10)", value=storico, inline=False)
+    else:
+        embed.add_field(name="📜 Storico", value="Nessuna azione registrata.", inline=False)
+    
+    await interaction.response.send_message(embed=embed)
+
+# ==========================================
+# 11. SISTEMA NEGOZIO (CON PAGINAZIONE)
 # ==========================================
 
 @bot.tree.command(name="negozio", description="Mostra il catalogo degli articoli acquistabili in città")
@@ -1231,7 +1551,7 @@ async def rimuovi_oggetto_negozio(interaction: discord.Interaction, nome: str):
         await interaction.response.send_message("❌ Articolo non presente nello store.", ephemeral=True)
 
 # ==========================================
-# 11. COMANDI ADMIN GESTIONE INVENTARIO
+# 12. COMANDI ADMIN GESTIONE INVENTARIO
 # ==========================================
 
 @bot.tree.command(name="dai_oggetto", description="[ADMIN] Aggiunge un oggetto all'inventario di un giocatore")
@@ -1443,7 +1763,7 @@ async def dai_soldi_banca(interaction: discord.Interaction, utente: discord.User
     )
 
 # ==========================================
-# 12. TELEFONO & SOCIAL
+# 13. TELEFONO & SOCIAL
 # ==========================================
 
 @bot.tree.command(name="anonimo", description="Invia un messaggio anonimo nella chat oscura")
@@ -1487,7 +1807,7 @@ async def chiama(interaction: discord.Interaction, utente: discord.User):
         await interaction.response.send_message(f"❌ Impossibile inviare la chiamata a {utente.mention} (DM chiusi).", ephemeral=True)
 
 # ==========================================
-# 13. SISTEMA SMS
+# 14. SISTEMA SMS
 # ==========================================
 
 @bot.tree.command(name="sms", description="Invia un SMS a un giocatore")
@@ -1599,7 +1919,7 @@ async def cancella_sms(interaction: discord.Interaction):
     await interaction.response.send_message(f"🗑️ Hai cancellato **{num_sms}** SMS dalla tua casella.", ephemeral=True)
 
 # ==========================================
-# 14. SISTEMA AZIONI RP
+# 15. SISTEMA AZIONI RP
 # ==========================================
 
 @bot.tree.command(name="azione", description="Esegui un'azione RP visibile a tutti nel canale")
@@ -1681,7 +2001,7 @@ async def azione_master(interaction: discord.Interaction, azione: str, target: d
     )
 
 # ==========================================
-# 15. GESTIONE STATO SESSIONE & UTILITY RP
+# 16. GESTIONE STATO SESSIONE & UTILITY RP
 # ==========================================
 
 @bot.tree.command(name="rpon", description="🟢 Attiva la sessione RP - Apre la città al Roleplay")
