@@ -843,8 +843,8 @@ async def mercato_rimuovi(interaction: discord.Interaction, oggetto: str):
     await interaction.response.send_message(f"✅ Hai rimosso i tuoi annunci per **{oggetto}** e gli oggetti sono tornati nel tuo inventario.")
 
 class MercatoView(discord.ui.View):
-    def __init__(self, embed_creator, total_pages, timeout=180):
-        super().__init__(timeout=timeout)
+    def __init__(self, embed_creator, total_pages):
+        super().__init__(timeout=None)
         self.embed_creator = embed_creator
         self.current_page = 1
         self.total_pages = total_pages
@@ -857,7 +857,8 @@ class MercatoView(discord.ui.View):
         back_button = discord.ui.Button(
             label="◀️ Indietro", 
             style=discord.ButtonStyle.gray,
-            disabled=self.current_page == 1
+            disabled=self.current_page == 1,
+            custom_id="mercato_back"
         )
         back_button.callback = self.go_back
         self.add_item(back_button)
@@ -865,14 +866,16 @@ class MercatoView(discord.ui.View):
         page_button = discord.ui.Button(
             label=f"📄 {self.current_page}/{self.total_pages}", 
             style=discord.ButtonStyle.blurple,
-            disabled=True
+            disabled=True,
+            custom_id="mercato_page"
         )
         self.add_item(page_button)
         
         next_button = discord.ui.Button(
             label="Avanti ▶️", 
             style=discord.ButtonStyle.gray,
-            disabled=self.current_page == self.total_pages
+            disabled=self.current_page == self.total_pages,
+            custom_id="mercato_next"
         )
         next_button.callback = self.go_next
         self.add_item(next_button)
@@ -888,13 +891,6 @@ class MercatoView(discord.ui.View):
         self.update_buttons()
         embed = self.embed_creator(self.current_page)
         await interaction.response.edit_message(embed=embed, view=self)
-    
-    async def on_timeout(self):
-        if self.message:
-            try:
-                await self.message.edit(view=None)
-            except:
-                pass
 
 @bot.tree.command(name="mercato_lista", description="Mostra tutti gli annunci del mercato pubblico")
 async def mercato_lista(interaction: discord.Interaction):
@@ -1461,36 +1457,88 @@ async def stato_mod(interaction: discord.Interaction, utente: discord.User):
     await interaction.response.send_message(embed=embed)
 
 # ==========================================
-# 11. SISTEMA NEGOZIO (CON PAGINAZIONE)
+# 11. SISTEMA NEGOZIO (CON BOTTONI ETERNI)
 # ==========================================
 
+class NegozioView(discord.ui.View):
+    def __init__(self, embed_creator, total_pages):
+        super().__init__(timeout=None)
+        self.embed_creator = embed_creator
+        self.current_page = 1
+        self.total_pages = total_pages
+        self.message = None
+        self.update_buttons()
+    
+    def update_buttons(self):
+        self.clear_items()
+        
+        back_button = discord.ui.Button(
+            label="◀️ Indietro", 
+            style=discord.ButtonStyle.gray,
+            disabled=self.current_page == 1,
+            custom_id="negozio_back"
+        )
+        back_button.callback = self.go_back
+        self.add_item(back_button)
+        
+        page_button = discord.ui.Button(
+            label=f"📄 {self.current_page}/{self.total_pages}", 
+            style=discord.ButtonStyle.green,
+            disabled=True,
+            custom_id="negozio_page"
+        )
+        self.add_item(page_button)
+        
+        next_button = discord.ui.Button(
+            label="Avanti ▶️", 
+            style=discord.ButtonStyle.gray,
+            disabled=self.current_page == self.total_pages,
+            custom_id="negozio_next"
+        )
+        next_button.callback = self.go_next
+        self.add_item(next_button)
+    
+    async def go_back(self, interaction: discord.Interaction):
+        self.current_page -= 1
+        self.update_buttons()
+        embed = self.embed_creator(self.current_page)
+        await interaction.response.edit_message(embed=embed, view=self)
+    
+    async def go_next(self, interaction: discord.Interaction):
+        self.current_page += 1
+        self.update_buttons()
+        embed = self.embed_creator(self.current_page)
+        await interaction.response.edit_message(embed=embed, view=self)
+
 @bot.tree.command(name="negozio", description="Mostra il catalogo degli articoli acquistabili in città")
-async def negozio(interaction: discord.Interaction, pagina: int = 1):
+async def negozio(interaction: discord.Interaction):
     val = database["SETTINGS"]["valuta"]
     items = list(database["STORE"].items())
     total_pages = math.ceil(len(items) / ITEMS_PER_PAGE)
     
-    if pagina < 1 or pagina > total_pages:
-        await interaction.response.send_message(f"❌ Pagina non valida. Pagine disponibili: 1-{total_pages}", ephemeral=True)
-        return
-    
-    embed = discord.Embed(
-        title=f"🛒 Negozio di Los Santos (Pagina {pagina}/{total_pages})", 
-        color=discord.Color.gold()
-    )
-    
-    start_idx = (pagina - 1) * ITEMS_PER_PAGE
-    end_idx = min(start_idx + ITEMS_PER_PAGE, len(items))
-    
-    for item, dettagli in items[start_idx:end_idx]:
-        embed.add_field(
-            name=f"📦 {item.upper()}", 
-            value=f"Prezzo: **{dettagli['prezzo']}{val}**\nInfo: *{dettagli['descrizione']}*", 
-            inline=False
+    def create_embed(page):
+        embed = discord.Embed(
+            title=f"🛒 Negozio di Los Santos (Pagina {page}/{total_pages})", 
+            color=discord.Color.gold()
         )
+        
+        start_idx = (page - 1) * ITEMS_PER_PAGE
+        end_idx = min(start_idx + ITEMS_PER_PAGE, len(items))
+        
+        for item, dettagli in items[start_idx:end_idx]:
+            embed.add_field(
+                name=f"📦 {item.upper()}", 
+                value=f"Prezzo: **{dettagli['prezzo']}{val}**\nInfo: *{dettagli['descrizione']}*", 
+                inline=False
+            )
+        
+        embed.set_footer(text=f"Usa i bottoni qui sotto per navigare")
+        return embed
     
-    embed.set_footer(text=f"Usa /negozio pagina:<numero> per navigare • /compra_oggetto per acquistare")
-    await interaction.response.send_message(embed=embed)
+    embed = create_embed(1)
+    view = NegozioView(create_embed, total_pages)
+    await interaction.response.send_message(embed=embed, view=view)
+    view.message = await interaction.original_response()
 
 @bot.tree.command(name="compra_oggetto", description="Acquista un articolo dallo store cittadino")
 async def compra_oggetto(interaction: discord.Interaction, nome_oggetto: str):
