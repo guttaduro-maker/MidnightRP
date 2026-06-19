@@ -80,8 +80,8 @@ def controlla_utente(user_id):
             "lavoro": "Disoccupato",
             "in_servizio": False,
             "inizio_turno": None,
-            "contanti": 500,
-            "banca": 2500,
+            "contanti": 0,
+            "banca": 5000,
             "fedina": [],
             "multe": 0,
             "ammanettato": False,
@@ -95,7 +95,7 @@ def controlla_utente(user_id):
     else:
         cambiato = False
         chiavi_default = {
-            "contanti": 500, "banca": 2500, "fedina": [], 
+            "contanti": 0, "banca": 5000, "fedina": [], 
             "multe": 0, "ammanettato": False, "lavoro": "Disoccupato",
             "sms_ricevuti": [], "avvisi": 0, "warn": 0, "ban": False,
             "storico_mod": []
@@ -709,6 +709,207 @@ async def paga_deposito(interaction: discord.Interaction):
         f"L'utente {interaction.user.mention} ha pagato il riscatto del veicolo sequestrato spendendo **{costo}{val}**.", 
         discord.Color.orange()
     )
+
+# ==========================================
+# 7.5 COMANDI ADMIN GESTIONE ECONOMIA
+# ==========================================
+
+@bot.tree.command(name="imposta_soldi", description="[ADMIN] Imposta i soldi contanti di un giocatore")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(
+    utente="Il giocatore target",
+    importo="Nuovo saldo contanti"
+)
+async def imposta_soldi(interaction: discord.Interaction, utente: discord.User, importo: int):
+    target_id = str(utente.id)
+    controlla_utente(target_id)
+    val = database["SETTINGS"]["valuta"]
+    
+    if importo < 0:
+        await interaction.response.send_message("❌ L'importo non può essere negativo.", ephemeral=True)
+        return
+    
+    vecchio_saldo = database[target_id]["contanti"]
+    database[target_id]["contanti"] = importo
+    salva_database()
+    
+    await interaction.response.send_message(f"💰 Impostato saldo contanti di {utente.mention} a **{importo}{val}** (prima: {vecchio_saldo}{val}).")
+    
+    await invia_log(
+        "💰 Log Admin - Soldi Impostati", 
+        f"L'amministratore {interaction.user.mention} ha impostato i contanti di {utente.mention} a {importo}{val} (prima: {vecchio_saldo}{val}).", 
+        discord.Color.blue()
+    )
+
+@bot.tree.command(name="imposta_banca", description="[ADMIN] Imposta i soldi in banca di un giocatore")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(
+    utente="Il giocatore target",
+    importo="Nuovo saldo banca"
+)
+async def imposta_banca(interaction: discord.Interaction, utente: discord.User, importo: int):
+    target_id = str(utente.id)
+    controlla_utente(target_id)
+    val = database["SETTINGS"]["valuta"]
+    
+    if importo < 0:
+        await interaction.response.send_message("❌ L'importo non può essere negativo.", ephemeral=True)
+        return
+    
+    vecchio_saldo = database[target_id]["banca"]
+    database[target_id]["banca"] = importo
+    salva_database()
+    
+    await interaction.response.send_message(f"🏦 Impostato saldo banca di {utente.mention} a **{importo}{val}** (prima: {vecchio_saldo}{val}).")
+    
+    await invia_log(
+        "🏦 Log Admin - Banca Impostata", 
+        f"L'amministratore {interaction.user.mention} ha impostato la banca di {utente.mention} a {importo}{val} (prima: {vecchio_saldo}{val}).", 
+        discord.Color.blue()
+    )
+
+@bot.tree.command(name="resetta_soldi", description="[ADMIN] Azzera tutti i soldi di un giocatore (contanti + banca)")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(
+    utente="Il giocatore a cui azzerare i soldi"
+)
+async def resetta_soldi(interaction: discord.Interaction, utente: discord.User):
+    target_id = str(utente.id)
+    controlla_utente(target_id)
+    val = database["SETTINGS"]["valuta"]
+    
+    vecchi_contanti = database[target_id]["contanti"]
+    vecchia_banca = database[target_id]["banca"]
+    
+    database[target_id]["contanti"] = 0
+    database[target_id]["banca"] = 0
+    salva_database()
+    
+    await interaction.response.send_message(f"💸 Azzerati tutti i soldi di {utente.mention}!\nContanti: {vecchi_contanti}{val} ➜ 0{val}\nBanca: {vecchia_banca}{val} ➜ 0{val}")
+    
+    await invia_log(
+        "💸 Log Admin - Soldi Azzerati", 
+        f"L'amministratore {interaction.user.mention} ha azzerato tutti i soldi di {utente.mention} (Contanti: {vecchi_contanti}{val}, Banca: {vecchia_banca}{val}).", 
+        discord.Color.red()
+    )
+
+@bot.tree.command(name="resetta_soldi_tutti", description="[ADMIN] Azzera i soldi di TUTTI i giocatori")
+@app_commands.checks.has_permissions(administrator=True)
+async def resetta_soldi_tutti(interaction: discord.Interaction):
+    await interaction.response.send_message("⚠️ **Sei sicuro di voler azzerare i soldi di TUTTI i giocatori?**\nUsa `/conferma_reset_soldi` per confermare.", ephemeral=True)
+
+@bot.tree.command(name="conferma_reset_soldi", description="[ADMIN] Conferma l'azzeramento soldi di tutti")
+@app_commands.checks.has_permissions(administrator=True)
+async def conferma_reset_soldi(interaction: discord.Interaction):
+    val = database["SETTINGS"]["valuta"]
+    count = 0
+    
+    for uid, data in database.items():
+        if uid in ["SETTINGS", "STORE", "JOBS", "MERCATO"]:
+            continue
+        data["contanti"] = 0
+        data["banca"] = 0
+        count += 1
+    
+    salva_database()
+    
+    await interaction.response.send_message(f"💸 **Azzzerati tutti i soldi di {count} giocatori!**")
+    
+    await invia_log(
+        "💸 Log Admin - Reset Soldi Globale", 
+        f"L'amministratore {interaction.user.mention} ha **azzerato i soldi di TUTTI i giocatori** ({count} utenti).", 
+        discord.Color.red()
+    )
+
+@bot.tree.command(name="imposta_valuta", description="[ADMIN] Cambia il simbolo della valuta del server")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(
+    simbolo="Nuovo simbolo valuta (es. €, $, £)"
+)
+async def imposta_valuta(interaction: discord.Interaction, simbolo: str):
+    vecchia_valuta = database["SETTINGS"]["valuta"]
+    database["SETTINGS"]["valuta"] = simbolo
+    salva_database()
+    
+    await interaction.response.send_message(f"💱 Valuta cambiata da **{vecchia_valuta}** a **{simbolo}**!")
+    
+    await invia_log(
+        "💱 Log Admin - Valuta Cambiata", 
+        f"L'amministratore {interaction.user.mention} ha cambiato la valuta da {vecchia_valuta} a {simbolo}.", 
+        discord.Color.blue()
+    )
+
+@bot.tree.command(name="imposta_stipendio", description="[ADMIN] Cambia lo stipendio base dei lavori")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(
+    importo="Nuovo stipendio base"
+)
+async def imposta_stipendio(interaction: discord.Interaction, importo: int):
+    if importo < 0:
+        await interaction.response.send_message("❌ L'importo non può essere negativo.", ephemeral=True)
+        return
+    
+    vecchio = database["SETTINGS"]["stipendio_base"]
+    database["SETTINGS"]["stipendio_base"] = importo
+    salva_database()
+    
+    await interaction.response.send_message(f"💼 Stipendio base cambiato da **{vecchio}** a **{importo}**!")
+    
+    await invia_log(
+        "💼 Log Admin - Stipendio Cambiato", 
+        f"L'amministratore {interaction.user.mention} ha cambiato lo stipendio base da {vecchio} a {importo}.", 
+        discord.Color.blue()
+    )
+
+@bot.tree.command(name="imposta_tassa", description="[ADMIN] Cambia la tassa di servizio (deposito veicoli)")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(
+    importo="Nuova tassa di servizio"
+)
+async def imposta_tassa(interaction: discord.Interaction, importo: int):
+    if importo < 0:
+        await interaction.response.send_message("❌ L'importo non può essere negativo.", ephemeral=True)
+        return
+    
+    vecchia = database["SETTINGS"]["tassa_servizi"]
+    database["SETTINGS"]["tassa_servizi"] = importo
+    salva_database()
+    
+    await interaction.response.send_message(f"🛞 Tassa di servizio cambiata da **{vecchia}** a **{importo}**!")
+    
+    await invia_log(
+        "🛞 Log Admin - Tassa Cambiata", 
+        f"L'amministratore {interaction.user.mention} ha cambiato la tassa di servizio da {vecchia} a {importo}.", 
+        discord.Color.blue()
+    )
+
+@bot.tree.command(name="economia_info", description="[ADMIN] Mostra le impostazioni attuali dell'economia")
+@app_commands.checks.has_permissions(administrator=True)
+async def economia_info(interaction: discord.Interaction):
+    val = database["SETTINGS"]["valuta"]
+    
+    embed = discord.Embed(
+        title="📊 Impostazioni Economia Server",
+        color=discord.Color.gold()
+    )
+    embed.add_field(name="💱 Valuta", value=database["SETTINGS"]["valuta"], inline=True)
+    embed.add_field(name="💼 Stipendio Base", value=f"{database['SETTINGS']['stipendio_base']}{val}", inline=True)
+    embed.add_field(name="🛞 Tassa Servizi", value=f"{database['SETTINGS']['tassa_servizi']}{val}", inline=True)
+    embed.add_field(name="👥 Giocatori Registrati", value=str(len([u for u in database if u not in ["SETTINGS", "STORE", "JOBS", "MERCATO"]])), inline=True)
+    
+    totale_contanti = 0
+    totale_banca = 0
+    for uid, data in database.items():
+        if uid in ["SETTINGS", "STORE", "JOBS", "MERCATO"]:
+            continue
+        totale_contanti += data.get("contanti", 0)
+        totale_banca += data.get("banca", 0)
+    
+    embed.add_field(name="💰 Totale Contanti", value=f"{totale_contanti}{val}", inline=True)
+    embed.add_field(name="🏦 Totale Banche", value=f"{totale_banca}{val}", inline=True)
+    embed.add_field(name="📦 Totale Economia", value=f"{totale_contanti + totale_banca}{val}", inline=True)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ==========================================
 # 8. SISTEMA MERCATO GIOCATORI
