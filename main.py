@@ -7,6 +7,7 @@ import json
 import os
 import aiohttp
 import math
+import random
 
 # Configurazione Bot e Intent
 intents = discord.Intents.default()
@@ -214,6 +215,16 @@ async def annulla_raccolta(interaction: discord.Interaction):
         await interaction.response.send_message("✅ Richiesta di annullamento inviata.", ephemeral=True)
     else:
         await interaction.response.send_message("❌ Non hai nessuna raccolta di droga attiva al momento.", ephemeral=True)
+
+@bot.tree.command(name="forza_stop_raccolta", description="[ADMIN] Ferma forzatamente la raccolta di un giocatore")
+@app_commands.checks.has_permissions(administrator=True)
+async def forza_stop_raccolta(interaction: discord.Interaction, utente: discord.User):
+    user_id = str(utente.id)
+    if user_id in raccolte_attive:
+        raccolte_attive[user_id].cancel()
+        await interaction.response.send_message(f"🛑 Raccolta di {utente.mention} fermata forzatamente.")
+    else:
+        await interaction.response.send_message(f"❌ {utente.mention} non sta raccogliendo nulla.")
 
 # ==========================================
 # 2. SISTEMA LAVORI & TURNI
@@ -716,82 +727,47 @@ async def paga_deposito(interaction: discord.Interaction):
 
 @bot.tree.command(name="imposta_soldi", description="[ADMIN] Imposta i soldi contanti di un giocatore")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    utente="Il giocatore target",
-    importo="Nuovo saldo contanti"
-)
+@app_commands.describe(utente="Il giocatore target", importo="Nuovo saldo contanti")
 async def imposta_soldi(interaction: discord.Interaction, utente: discord.User, importo: int):
     target_id = str(utente.id)
     controlla_utente(target_id)
     val = database["SETTINGS"]["valuta"]
-    
     if importo < 0:
         await interaction.response.send_message("❌ L'importo non può essere negativo.", ephemeral=True)
         return
-    
     vecchio_saldo = database[target_id]["contanti"]
     database[target_id]["contanti"] = importo
     salva_database()
-    
     await interaction.response.send_message(f"💰 Impostato saldo contanti di {utente.mention} a **{importo}{val}** (prima: {vecchio_saldo}{val}).")
-    
-    await invia_log(
-        "💰 Log Admin - Soldi Impostati", 
-        f"L'amministratore {interaction.user.mention} ha impostato i contanti di {utente.mention} a {importo}{val} (prima: {vecchio_saldo}{val}).", 
-        discord.Color.blue()
-    )
 
 @bot.tree.command(name="imposta_banca", description="[ADMIN] Imposta i soldi in banca di un giocatore")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    utente="Il giocatore target",
-    importo="Nuovo saldo banca"
-)
+@app_commands.describe(utente="Il giocatore target", importo="Nuovo saldo banca")
 async def imposta_banca(interaction: discord.Interaction, utente: discord.User, importo: int):
     target_id = str(utente.id)
     controlla_utente(target_id)
     val = database["SETTINGS"]["valuta"]
-    
     if importo < 0:
         await interaction.response.send_message("❌ L'importo non può essere negativo.", ephemeral=True)
         return
-    
     vecchio_saldo = database[target_id]["banca"]
     database[target_id]["banca"] = importo
     salva_database()
-    
     await interaction.response.send_message(f"🏦 Impostato saldo banca di {utente.mention} a **{importo}{val}** (prima: {vecchio_saldo}{val}).")
-    
-    await invia_log(
-        "🏦 Log Admin - Banca Impostata", 
-        f"L'amministratore {interaction.user.mention} ha impostato la banca di {utente.mention} a {importo}{val} (prima: {vecchio_saldo}{val}).", 
-        discord.Color.blue()
-    )
 
 @bot.tree.command(name="resetta_soldi", description="[ADMIN] Azzera tutti i soldi di un giocatore (contanti + banca)")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    utente="Il giocatore a cui azzerare i soldi"
-)
+@app_commands.describe(utente="Il giocatore a cui azzerare i soldi")
 async def resetta_soldi(interaction: discord.Interaction, utente: discord.User):
     target_id = str(utente.id)
     controlla_utente(target_id)
     val = database["SETTINGS"]["valuta"]
-    
     vecchi_contanti = database[target_id]["contanti"]
     vecchia_banca = database[target_id]["banca"]
-    
     database[target_id]["contanti"] = 0
     database[target_id]["banca"] = 0
     salva_database()
-    
     await interaction.response.send_message(f"💸 Azzerati tutti i soldi di {utente.mention}!\nContanti: {vecchi_contanti}{val} ➜ 0{val}\nBanca: {vecchia_banca}{val} ➜ 0{val}")
-    
-    await invia_log(
-        "💸 Log Admin - Soldi Azzerati", 
-        f"L'amministratore {interaction.user.mention} ha azzerato tutti i soldi di {utente.mention} (Contanti: {vecchi_contanti}{val}, Banca: {vecchia_banca}{val}).", 
-        discord.Color.red()
-    )
 
 @bot.tree.command(name="resetta_soldi_tutti", description="[ADMIN] Azzera i soldi di TUTTI i giocatori")
 @app_commands.checks.has_permissions(administrator=True)
@@ -801,102 +777,58 @@ async def resetta_soldi_tutti(interaction: discord.Interaction):
 @bot.tree.command(name="conferma_reset_soldi", description="[ADMIN] Conferma l'azzeramento soldi di tutti")
 @app_commands.checks.has_permissions(administrator=True)
 async def conferma_reset_soldi(interaction: discord.Interaction):
-    val = database["SETTINGS"]["valuta"]
     count = 0
-    
     for uid, data in database.items():
         if uid in ["SETTINGS", "STORE", "JOBS", "MERCATO"]:
             continue
         data["contanti"] = 0
         data["banca"] = 0
         count += 1
-    
     salva_database()
-    
     await interaction.response.send_message(f"💸 **Azzzerati tutti i soldi di {count} giocatori!**")
-    
-    await invia_log(
-        "💸 Log Admin - Reset Soldi Globale", 
-        f"L'amministratore {interaction.user.mention} ha **azzerato i soldi di TUTTI i giocatori** ({count} utenti).", 
-        discord.Color.red()
-    )
 
 @bot.tree.command(name="imposta_valuta", description="[ADMIN] Cambia il simbolo della valuta del server")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    simbolo="Nuovo simbolo valuta (es. €, $, £)"
-)
+@app_commands.describe(simbolo="Nuovo simbolo valuta (es. €, $, £)")
 async def imposta_valuta(interaction: discord.Interaction, simbolo: str):
     vecchia_valuta = database["SETTINGS"]["valuta"]
     database["SETTINGS"]["valuta"] = simbolo
     salva_database()
-    
     await interaction.response.send_message(f"💱 Valuta cambiata da **{vecchia_valuta}** a **{simbolo}**!")
-    
-    await invia_log(
-        "💱 Log Admin - Valuta Cambiata", 
-        f"L'amministratore {interaction.user.mention} ha cambiato la valuta da {vecchia_valuta} a {simbolo}.", 
-        discord.Color.blue()
-    )
 
 @bot.tree.command(name="imposta_stipendio", description="[ADMIN] Cambia lo stipendio base dei lavori")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    importo="Nuovo stipendio base"
-)
+@app_commands.describe(importo="Nuovo stipendio base")
 async def imposta_stipendio(interaction: discord.Interaction, importo: int):
     if importo < 0:
         await interaction.response.send_message("❌ L'importo non può essere negativo.", ephemeral=True)
         return
-    
     vecchio = database["SETTINGS"]["stipendio_base"]
     database["SETTINGS"]["stipendio_base"] = importo
     salva_database()
-    
     await interaction.response.send_message(f"💼 Stipendio base cambiato da **{vecchio}** a **{importo}**!")
-    
-    await invia_log(
-        "💼 Log Admin - Stipendio Cambiato", 
-        f"L'amministratore {interaction.user.mention} ha cambiato lo stipendio base da {vecchio} a {importo}.", 
-        discord.Color.blue()
-    )
 
 @bot.tree.command(name="imposta_tassa", description="[ADMIN] Cambia la tassa di servizio (deposito veicoli)")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    importo="Nuova tassa di servizio"
-)
+@app_commands.describe(importo="Nuova tassa di servizio")
 async def imposta_tassa(interaction: discord.Interaction, importo: int):
     if importo < 0:
         await interaction.response.send_message("❌ L'importo non può essere negativo.", ephemeral=True)
         return
-    
     vecchia = database["SETTINGS"]["tassa_servizi"]
     database["SETTINGS"]["tassa_servizi"] = importo
     salva_database()
-    
     await interaction.response.send_message(f"🛞 Tassa di servizio cambiata da **{vecchia}** a **{importo}**!")
-    
-    await invia_log(
-        "🛞 Log Admin - Tassa Cambiata", 
-        f"L'amministratore {interaction.user.mention} ha cambiato la tassa di servizio da {vecchia} a {importo}.", 
-        discord.Color.blue()
-    )
 
 @bot.tree.command(name="economia_info", description="[ADMIN] Mostra le impostazioni attuali dell'economia")
 @app_commands.checks.has_permissions(administrator=True)
 async def economia_info(interaction: discord.Interaction):
     val = database["SETTINGS"]["valuta"]
-    
-    embed = discord.Embed(
-        title="📊 Impostazioni Economia Server",
-        color=discord.Color.gold()
-    )
+    embed = discord.Embed(title="📊 Impostazioni Economia Server", color=discord.Color.gold())
     embed.add_field(name="💱 Valuta", value=database["SETTINGS"]["valuta"], inline=True)
     embed.add_field(name="💼 Stipendio Base", value=f"{database['SETTINGS']['stipendio_base']}{val}", inline=True)
     embed.add_field(name="🛞 Tassa Servizi", value=f"{database['SETTINGS']['tassa_servizi']}{val}", inline=True)
     embed.add_field(name="👥 Giocatori Registrati", value=str(len([u for u in database if u not in ["SETTINGS", "STORE", "JOBS", "MERCATO"]])), inline=True)
-    
     totale_contanti = 0
     totale_banca = 0
     for uid, data in database.items():
@@ -904,11 +836,9 @@ async def economia_info(interaction: discord.Interaction):
             continue
         totale_contanti += data.get("contanti", 0)
         totale_banca += data.get("banca", 0)
-    
     embed.add_field(name="💰 Totale Contanti", value=f"{totale_contanti}{val}", inline=True)
     embed.add_field(name="🏦 Totale Banche", value=f"{totale_banca}{val}", inline=True)
     embed.add_field(name="📦 Totale Economia", value=f"{totale_contanti + totale_banca}{val}", inline=True)
-    
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ==========================================
@@ -916,11 +846,7 @@ async def economia_info(interaction: discord.Interaction):
 # ==========================================
 
 @bot.tree.command(name="mercato_vendi", description="Metti in vendita un oggetto dal tuo inventario al mercato pubblico")
-@app_commands.describe(
-    oggetto="Nome dell'oggetto da vendere",
-    prezzo="Prezzo unitario in contanti",
-    quantita="Quantità da mettere in vendita"
-)
+@app_commands.describe(oggetto="Nome dell'oggetto da vendere", prezzo="Prezzo unitario in contanti", quantita="Quantità da mettere in vendita")
 async def mercato_vendi(interaction: discord.Interaction, oggetto: str, prezzo: int, quantita: int = 1):
     user_id = str(interaction.user.id)
     controlla_utente(user_id)
@@ -950,18 +876,10 @@ async def mercato_vendi(interaction: discord.Interaction, oggetto: str, prezzo: 
     val = database["SETTINGS"]["valuta"]
     await interaction.response.send_message(f"🏪 Hai messo in vendita **{quantita}x {oggetto}** a **{prezzo}{val}** ciascuno sul mercato pubblico!")
     
-    await invia_log(
-        "🏪 Log Mercato - Vendita", 
-        f"L'utente {interaction.user.mention} ha messo in vendita **{quantita}x {oggetto}** a {prezzo}{val} l'uno.", 
-        discord.Color.gold()
-    )
+    await invia_log("🏪 Log Mercato - Vendita", f"L'utente {interaction.user.mention} ha messo in vendita **{quantita}x {oggetto}** a {prezzo}{val} l'uno.", discord.Color.gold())
 
 @bot.tree.command(name="mercato_compra", description="Compra un oggetto dal mercato pubblico")
-@app_commands.describe(
-    oggetto="Nome dell'oggetto da comprare",
-    venditore="Il venditore da cui comprare",
-    quantita="Quantità da acquistare"
-)
+@app_commands.describe(oggetto="Nome dell'oggetto da comprare", venditore="Il venditore da cui comprare", quantita="Quantità da acquistare")
 async def mercato_compra(interaction: discord.Interaction, oggetto: str, venditore: discord.User, quantita: int = 1):
     user_id = str(interaction.user.id)
     controlla_utente(user_id)
@@ -1007,12 +925,7 @@ async def mercato_compra(interaction: discord.Interaction, oggetto: str, vendito
     
     salva_database()
     await interaction.response.send_message(f"🛍️ Hai comprato **{quantita}x {oggetto}** da {venditore.mention} per **{costo_totale}{val}**!")
-    
-    await invia_log(
-        "🏪 Log Mercato - Acquisto", 
-        f"L'utente {interaction.user.mention} ha comprato **{quantita}x {oggetto}** da {venditore.mention} per {costo_totale}{val}.", 
-        discord.Color.gold()
-    )
+    await invia_log("🏪 Log Mercato - Acquisto", f"L'utente {interaction.user.mention} ha comprato **{quantita}x {oggetto}** da {venditore.mention} per {costo_totale}{val}.", discord.Color.gold())
 
 @bot.tree.command(name="mercato_rimuovi", description="Rimuovi una tua vendita dal mercato")
 async def mercato_rimuovi(interaction: discord.Interaction, oggetto: str):
@@ -1054,30 +967,12 @@ class MercatoView(discord.ui.View):
     
     def update_buttons(self):
         self.clear_items()
-        
-        back_button = discord.ui.Button(
-            label="◀️ Indietro", 
-            style=discord.ButtonStyle.gray,
-            disabled=self.current_page == 1,
-            custom_id="mercato_back"
-        )
+        back_button = discord.ui.Button(label="◀️ Indietro", style=discord.ButtonStyle.gray, disabled=self.current_page == 1, custom_id="mercato_back")
         back_button.callback = self.go_back
         self.add_item(back_button)
-        
-        page_button = discord.ui.Button(
-            label=f"📄 {self.current_page}/{self.total_pages}", 
-            style=discord.ButtonStyle.blurple,
-            disabled=True,
-            custom_id="mercato_page"
-        )
+        page_button = discord.ui.Button(label=f"📄 {self.current_page}/{self.total_pages}", style=discord.ButtonStyle.blurple, disabled=True, custom_id="mercato_page")
         self.add_item(page_button)
-        
-        next_button = discord.ui.Button(
-            label="Avanti ▶️", 
-            style=discord.ButtonStyle.gray,
-            disabled=self.current_page == self.total_pages,
-            custom_id="mercato_next"
-        )
+        next_button = discord.ui.Button(label="Avanti ▶️", style=discord.ButtonStyle.gray, disabled=self.current_page == self.total_pages, custom_id="mercato_next")
         next_button.callback = self.go_next
         self.add_item(next_button)
     
@@ -1105,20 +1000,14 @@ async def mercato_lista(interaction: discord.Interaction):
     total_pages = math.ceil(len(items_list) / items_per_page)
     
     def create_embed(page):
-        embed = discord.Embed(
-            title=f"🏪 Mercato Pubblico di Los Santos (Pagina {page}/{total_pages})", 
-            color=discord.Color.gold()
-        )
-        
+        embed = discord.Embed(title=f"🏪 Mercato Pubblico di Los Santos (Pagina {page}/{total_pages})", color=discord.Color.gold())
         start_idx = (page - 1) * items_per_page
         end_idx = min(start_idx + items_per_page, len(items_list))
-        
         for oggetto, annunci in items_list[start_idx:end_idx]:
             testo = ""
             for ann in annunci:
                 testo += f"• Venditore: **{ann['venditore_nome']}** | Prezzo: {ann['prezzo']}{val} | Qtà: {ann['quantita']}\n"
             embed.add_field(name=f"📦 {oggetto.capitalize()}", value=testo, inline=False)
-        
         embed.set_footer(text=f"Usa i bottoni qui sotto per navigare")
         return embed
     
@@ -1128,130 +1017,61 @@ async def mercato_lista(interaction: discord.Interaction):
     view.message = await interaction.original_response()
 
 @bot.tree.command(name="proponi_vendita", description="Proponi a un giocatore specifico di comprare un tuo oggetto")
-@app_commands.describe(
-    acquirente="Il giocatore a cui vuoi vendere",
-    oggetto="L'oggetto che vuoi vendere",
-    prezzo="Il prezzo richiesto",
-    quantita="Quanti ne vuoi vendere"
-)
+@app_commands.describe(acquirente="Il giocatore a cui vuoi vendere", oggetto="L'oggetto che vuoi vendere", prezzo="Il prezzo richiesto", quantita="Quanti ne vuoi vendere")
 async def proponi_vendita(interaction: discord.Interaction, acquirente: discord.User, oggetto: str, prezzo: int, quantita: int = 1):
     user_id = str(interaction.user.id)
     controlla_utente(user_id)
     oggetto = oggetto.lower()
     val = database["SETTINGS"]["valuta"]
-    
-    if acquirente.id == interaction.user.id:
-        await interaction.response.send_message("❌ Non puoi proporre vendite a te stesso!", ephemeral=True)
+    if acquirente.id == interaction.user.id or prezzo <= 0 or quantita <= 0:
+        await interaction.response.send_message("❌ Dati non validi.", ephemeral=True)
         return
-        
-    if prezzo <= 0 or quantita <= 0:
-        await interaction.response.send_message("❌ Prezzo e quantità devono essere positivi.", ephemeral=True)
-        return
-        
     if database[user_id]["inventario"].get(oggetto, 0) < quantita:
-        await interaction.response.send_message(f"❌ Non hai abbastanza **{oggetto}** (hai {database[user_id]['inventario'].get(oggetto, 0)} unità).", ephemeral=True)
+        await interaction.response.send_message(f"❌ Non hai abbastanza **{oggetto}**.", ephemeral=True)
         return
-    
-    embed = discord.Embed(
-        title="💼 Proposta di Vendita",
-        description=f"**{interaction.user.mention}** vuole venderti:\n\n"
-                   f"📦 **{quantita}x {oggetto.capitalize()}**\n"
-                   f"💰 Prezzo: **{prezzo}{val}** ciascuno\n"
-                   f"💵 Totale: **{prezzo * quantita}{val}**\n\n"
-                   f"Usa `/accetta_vendita @{interaction.user.display_name} {oggetto} {quantita}` per accettare!",
-        color=discord.Color.green()
-    )
-    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
-    
+    embed = discord.Embed(title="💼 Proposta di Vendita", description=f"**{interaction.user.mention}** vuole venderti:\n\n📦 **{quantita}x {oggetto.capitalize()}**\n💰 Prezzo: **{prezzo}{val}** ciascuno\n💵 Totale: **{prezzo * quantita}{val}**\n\nUsa `/accetta_vendita @{interaction.user.display_name} {oggetto} {quantita}`", color=discord.Color.green())
     try:
         await acquirente.send(embed=embed)
-        await interaction.response.send_message(f"✅ Proposta di vendita inviata a {acquirente.mention} per **{quantita}x {oggetto}** a **{prezzo}{val}** l'uno.")
-        
-        await invia_log(
-            "💼 Log Proposta Vendita", 
-            f"L'utente {interaction.user.mention} ha proposto a {acquirente.mention} di comprare **{quantita}x {oggetto}** a {prezzo}{val} l'uno.", 
-            discord.Color.blue()
-        )
+        await interaction.response.send_message(f"✅ Proposta inviata a {acquirente.mention}.")
     except discord.Forbidden:
-        await interaction.response.send_message(f"❌ Impossibile inviare un messaggio privato a {acquirente.mention}. Potrebbe avere i DM chiusi.", ephemeral=True)
+        await interaction.response.send_message(f"❌ Impossibile inviare il messaggio a {acquirente.mention}.", ephemeral=True)
 
 @bot.tree.command(name="accetta_vendita", description="Accetta una proposta di vendita ricevuta")
-@app_commands.describe(
-    venditore="Il giocatore che ti ha proposto la vendita",
-    oggetto="L'oggetto della proposta",
-    quantita="Quanti ne vuoi comprare"
-)
+@app_commands.describe(venditore="Il giocatore che ti ha proposto la vendita", oggetto="L'oggetto della proposta", quantita="Quanti ne vuoi comprare")
 async def accetta_vendita(interaction: discord.Interaction, venditore: discord.User, oggetto: str, quantita: int = 1):
     user_id = str(interaction.user.id)
     controlla_utente(user_id)
     venditore_id = str(venditore.id)
     controlla_utente(venditore_id)
     oggetto = oggetto.lower()
-    
     if venditore.id == interaction.user.id:
         await interaction.response.send_message("❌ Non puoi accettare una vendita da te stesso!", ephemeral=True)
         return
-    
     if database[venditore_id]["inventario"].get(oggetto, 0) < quantita:
-        await interaction.response.send_message(f"❌ {venditore.mention} non ha più abbastanza **{oggetto}** da venderti.", ephemeral=True)
+        await interaction.response.send_message(f"❌ {venditore.mention} non ha più abbastanza **{oggetto}**.", ephemeral=True)
         return
-    
-    await interaction.response.send_message(
-        f"⚠️ Per completare l'acquisto, usa `/paga_cittadino @{venditore.display_name} <importo>` per pagare {venditore.mention}.\n"
-        f"Poi il venditore dovrà usare `/consegna_oggetto @{interaction.user.display_name} {oggetto} {quantita}` per consegnarti l'oggetto.\n"
-        f"*Sistema manuale per garantire sicurezza nella transazione.*",
-        ephemeral=True
-    )
+    await interaction.response.send_message(f"⚠️ Usa `/paga_cittadino @{venditore.display_name} <importo>` per pagare. Poi il venditore userà `/consegna_oggetto`.", ephemeral=True)
 
 @bot.tree.command(name="consegna_oggetto", description="Consegna un oggetto del tuo inventario a un altro giocatore")
-@app_commands.describe(
-    ricevente="Chi riceverà l'oggetto",
-    oggetto="L'oggetto da consegnare",
-    quantita="Quanti ne vuoi consegnare"
-)
+@app_commands.describe(ricevente="Chi riceverà l'oggetto", oggetto="L'oggetto da consegnare", quantita="Quanti ne vuoi consegnare")
 async def consegna_oggetto(interaction: discord.Interaction, ricevente: discord.User, oggetto: str, quantita: int = 1):
     user_id = str(interaction.user.id)
     controlla_utente(user_id)
     ricevente_id = str(ricevente.id)
     controlla_utente(ricevente_id)
     oggetto = oggetto.lower()
-    
-    if ricevente.id == interaction.user.id:
-        await interaction.response.send_message("❌ Non puoi consegnare oggetti a te stesso!", ephemeral=True)
+    if ricevente.id == interaction.user.id or quantita <= 0:
+        await interaction.response.send_message("❌ Operazione non valida.", ephemeral=True)
         return
-        
-    if quantita <= 0:
-        await interaction.response.send_message("❌ La quantità deve essere positiva.", ephemeral=True)
-        return
-        
     if database[user_id]["inventario"].get(oggetto, 0) < quantita:
-        await interaction.response.send_message(f"❌ Non hai abbastanza **{oggetto}** (hai {database[user_id]['inventario'].get(oggetto, 0)} unità).", ephemeral=True)
+        await interaction.response.send_message(f"❌ Non hai abbastanza **{oggetto}**.", ephemeral=True)
         return
-    
     database[user_id]["inventario"][oggetto] -= quantita
     if database[user_id]["inventario"][oggetto] == 0:
         del database[user_id]["inventario"][oggetto]
-    
     database[ricevente_id]["inventario"][oggetto] = database[ricevente_id]["inventario"].get(oggetto, 0) + quantita
     salva_database()
-    
     await interaction.response.send_message(f"✅ Hai consegnato **{quantita}x {oggetto}** a {ricevente.mention}!")
-    
-    try:
-        embed = discord.Embed(
-            title="📦 Oggetto Ricevuto!",
-            description=f"**{interaction.user.mention}** ti ha consegnato **{quantita}x {oggetto}**.\nControlla il tuo `/inventario`!",
-            color=discord.Color.green()
-        )
-        await ricevente.send(embed=embed)
-    except discord.Forbidden:
-        pass
-    
-    await invia_log(
-        "📦 Log Consegna Oggetti", 
-        f"L'utente {interaction.user.mention} ha consegnato **{quantita}x {oggetto}** a {ricevente.mention}.", 
-        discord.Color.teal()
-    )
 
 # ==========================================
 # 9. COMANDI INTERAZIONE POLIZIA
@@ -1261,101 +1081,57 @@ async def consegna_oggetto(interaction: discord.Interaction, ricevente: discord.
 async def p_multa(interaction: discord.Interaction, cittadino: discord.User, importo: int, motivo: str):
     user_id = str(interaction.user.id)
     controlla_utente(user_id)
-    
     if database[user_id].get("lavoro") != "Polizia" or not database[user_id].get("in_servizio"):
         await interaction.response.send_message("❌ Comando riservato alla Polizia in servizio.", ephemeral=True)
         return
-
     controlla_utente(str(cittadino.id))
     val = database["SETTINGS"]["valuta"]
-    
     database[str(cittadino.id)]["multe"] += importo
     salva_database()
-    
-    embed = discord.Embed(
-        title="🚔 CENTRALE LSPD - VERBALE DI MULTA",
-        description=f"**Agente:** {interaction.user.mention}\n**Cittadino:** {cittadino.mention}\n**Importo:** {importo}{val}\n**Motivazione:** {motivo}\n\n*La sanzione è stata caricata sul profilo del cittadino.*",
-        color=discord.Color.dark_blue()
-    )
-    await interaction.response.send_message("Multa notificata.", ephemeral=True)
-    await interaction.channel.send(embed=embed)
-    
-    await invia_log(
-        "🚔 Log Polizia - Multa", 
-        f"L'Agente {interaction.user.mention} ha multato {cittadino.mention} di **{importo}{val}**.\n**Motivo:** {motivo}", 
-        discord.Color.dark_blue()
-    )
+    embed = discord.Embed(title="🚔 CENTRALE LSPD - VERBALE DI MULTA", description=f"**Agente:** {interaction.user.mention}\n**Cittadino:** {cittadino.mention}\n**Importo:** {importo}{val}\n**Motivazione:** {motivo}", color=discord.Color.dark_blue())
+    await interaction.response.send_message(embed=embed)
+    await invia_log("🚔 Log Polizia - Multa", f"L'Agente {interaction.user.mention} ha multato {cittadino.mention} di **{importo}{val}**.\n**Motivo:** {motivo}", discord.Color.dark_blue())
 
 @bot.tree.command(name="p_arresto", description="[POLIZIA] Registra un arresto e aggiorna la fedina penale")
 async def p_arresto(interaction: discord.Interaction, cittadino: discord.User, mesi: int, motivo: str):
     user_id = str(interaction.user.id)
     controlla_utente(user_id)
-    
     if database[user_id].get("lavoro") != "Polizia" or not database[user_id].get("in_servizio"):
         await interaction.response.send_message("❌ Comando riservato alla Polizia in servizio.", ephemeral=True)
         return
-
     t_id = str(cittadino.id)
     controlla_utente(t_id)
-    
     timestamp = datetime.datetime.now().strftime("%d/%m/%Y")
     database[t_id]["fedina"].append(f"[{timestamp}] {mesi} Mesi per: {motivo}")
     salva_database()
-    
-    embed = discord.Embed(
-        title="🚨 LSPD - MANDATO DI ARRESTO ESEGUITO",
-        description=f"**Sospetto:** {cittadino.mention}\n**Tempo:** {mesi} mesi/minuti\n**Capo d'accusa:** {motivo}\n\n*Il reato è stata trascritto sulla fedina penale criminale.*",
-        color=discord.Color.dark_red()
-    )
-    await interaction.response.send_message("Arresto registrato.", ephemeral=True)
-    await interaction.channel.send(embed=embed)
-    
-    await invia_log(
-        "🚨 Log Polizia - Arresto", 
-        f"L'Agente {interaction.user.mention} ha arrestato {cittadino.mention} per **{mesi} mesi**.\n**Accusa:** {motivo}", 
-        discord.Color.dark_red()
-    )
+    embed = discord.Embed(title="🚨 LSPD - MANDATO DI ARRESTO ESEGUITO", description=f"**Sospetto:** {cittadino.mention}\n**Tempo:** {mesi} mesi/minuti\n**Capo d'accusa:** {motivo}", color=discord.Color.dark_red())
+    await interaction.response.send_message(embed=embed)
+    await invia_log("🚨 Log Polizia - Arresto", f"L'Agente {interaction.user.mention} ha arrestato {cittadino.mention} per **{mesi} mesi**.\n**Accusa:** {motivo}", discord.Color.dark_red())
 
 @bot.tree.command(name="fedina", description="Visualizza la fedina penale crimini di un cittadino")
 async def fedina(interaction: discord.Interaction, utente: discord.User = None):
     target = utente if utente else interaction.user
     controlla_utente(str(target.id))
-    
     lista_reati = database[str(target.id)].get("fedina", [])
-    
     embed = discord.Embed(title=f"📂 Archivio Penale di {target.display_name}", color=discord.Color.dark_purple())
-    
-    if lista_reati:
-        embed.description = "\n".join(lista_reati)
-    else:
-        embed.description = "✅ Fedina Penale completamente pulita. Nessun precedente registrato."
-        
+    embed.description = "\n".join(lista_reati) if lista_reati else "✅ Fedina Penale completamente pulita."
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="p_pulisci_fedina", description="[POLIZIA/ADMIN] Ripulisci la fedina penale di un cittadino")
 async def p_pulisci_fedina(interaction: discord.Interaction, utente: discord.User):
     user_id = str(interaction.user.id)
     controlla_utente(user_id)
-    
     is_admin = interaction.user.guild_permissions.administrator
     is_cop = database[user_id].get("lavoro") == "Polizia" and database[user_id].get("in_servizio")
-    
     if not (is_admin or is_cop):
-        await interaction.response.send_message("❌ Non hai l'autorizzazione o non sei in servizio nella Polizia.", ephemeral=True)
+        await interaction.response.send_message("❌ Non hai l'autorizzazione.", ephemeral=True)
         return
-        
     target_id = str(utente.id)
     controlla_utente(target_id)
     database[target_id]["fedina"] = []
     database[target_id]["multe"] = 0
     salva_database()
-    await interaction.response.send_message(f"🧼 La fedina penale e le sanzioni storiche di {utente.mention} sono state ripulite integralmente.")
-    
-    await invia_log(
-        "🧼 Log Polizia - Fedina Ripulita", 
-        f"L'utente {interaction.user.mention} ha **ripulito completamente** la fedina penale di {utente.mention}.", 
-        discord.Color.blue()
-    )
+    await interaction.response.send_message(f"🧼 Fedina penale di {utente.mention} ripulita.")
 
 @bot.tree.command(name="ammanetta", description="[POLIZIA] Blocca o sblocca un cittadino sul posto")
 async def ammanetta(interaction: discord.Interaction, utente: discord.User):
@@ -1364,21 +1140,13 @@ async def ammanetta(interaction: discord.Interaction, utente: discord.User):
     if database[u_id].get("lavoro") != "Polizia" or not database[u_id].get("in_servizio"):
         await interaction.response.send_message("❌ Comando riservato alla Polizia in servizio.", ephemeral=True)
         return
-        
     t_id = str(utente.id)
     controlla_utente(t_id)
     stato = not database[t_id].get("ammanettato", False)
     database[t_id]["ammanettato"] = stato
     salva_database()
-    
-    msg = f"🔗 {utente.mention} è stato **ammanettato**!" if stato else f"🔓 {utente.mention} è stato **smanettato** e liberato."
+    msg = f"🔗 {utente.mention} è stato **ammanettato**!" if stato else f"🔓 {utente.mention} è stato **smanettato**."
     await interaction.response.send_message(msg)
-    
-    await invia_log(
-        "🔗 Log Polizia - Manette", 
-        f"L'Agente {interaction.user.mention} ha {'**ammanettato**' if stato else '**liberato dalle manette**'} {utente.mention}.", 
-        discord.Color.dark_blue()
-    )
 
 @bot.tree.command(name="confisca", description="[POLIZIA] Sequestra e svuota gli oggetti illegali/tasche di un sospetto")
 async def confisca(interaction: discord.Interaction, utente: discord.User):
@@ -1387,19 +1155,11 @@ async def confisca(interaction: discord.Interaction, utente: discord.User):
     if database[u_id].get("lavoro") != "Polizia" or not database[u_id].get("in_servizio"):
         await interaction.response.send_message("❌ Comando riservato alla Polizia in servizio.", ephemeral=True)
         return
-        
     t_id = str(utente.id)
     controlla_utente(t_id)
-    
     database[t_id]["inventario"] = {}
     salva_database()
-    await interaction.response.send_message(f"🛡️ Ispezione eseguita. Tutti gli articoli illeciti/oggetti nelle tasche di {utente.mention} sono stati confiscati e distrutti.")
-    
-    await invia_log(
-        "🛡️ Log Polizia - Confisca", 
-        f"L'Agente {interaction.user.mention} ha perquisito e **confiscato l'intero inventario illecito** di {utente.mention}.", 
-        discord.Color.dark_blue()
-    )
+    await interaction.response.send_message(f"🛡️ Inventario di {utente.mention} confiscato.")
 
 # ==========================================
 # 10. SISTEMA MODERAZIONE (AVVISI, WARN, BAN)
@@ -1407,254 +1167,113 @@ async def confisca(interaction: discord.Interaction, utente: discord.User):
 
 @bot.tree.command(name="avviso", description="[STAFF] Dai un avviso a un giocatore")
 @app_commands.checks.has_permissions(moderate_members=True)
-@app_commands.describe(
-    utente="Il giocatore da avvisare",
-    motivo="Motivo dell'avviso"
-)
+@app_commands.describe(utente="Il giocatore da avvisare", motivo="Motivo dell'avviso")
 async def avviso(interaction: discord.Interaction, utente: discord.User, motivo: str):
     target_id = str(utente.id)
     controlla_utente(target_id)
-    
     timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-    
     database[target_id]["avvisi"] += 1
     database[target_id]["storico_mod"].append(f"[{timestamp}] ⚠️ AVVISO {database[target_id]['avvisi']}/3: {motivo} - Moderatore: {interaction.user.display_name}")
-    
     if database[target_id]["avvisi"] >= 3:
         database[target_id]["avvisi"] = 0
         database[target_id]["warn"] += 1
         database[target_id]["storico_mod"].append(f"[{timestamp}] 🟡 WARN AUTOMATICO: 3 avvisi raggiunti - Moderatore: Sistema")
-    
     salva_database()
-    
-    embed = discord.Embed(
-        title="⚠️ AVVISO",
-        description=f"**Giocatore:** {utente.mention}\n"
-                   f"**Avviso N°:** {database[target_id]['avvisi']}/3\n"
-                   f"**Motivo:** {motivo}\n"
-                   f"**Moderatore:** {interaction.user.mention}",
-        color=discord.Color.yellow()
-    )
-    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
-    
+    embed = discord.Embed(title="⚠️ AVVISO", description=f"**Giocatore:** {utente.mention}\n**Avviso N°:** {database[target_id]['avvisi']}/3\n**Motivo:** {motivo}\n**Moderatore:** {interaction.user.mention}", color=discord.Color.yellow())
     if database[target_id]["avvisi"] >= 3:
         embed.add_field(name="⚠️ ATTENZIONE", value="3 avvisi raggiunti! È stato automaticamente applicato un WARN.", inline=False)
-    
     await interaction.response.send_message(embed=embed)
-    
-    await invia_log(
-        "⚠️ Log Moderazione - Avviso", 
-        f"Il moderatore {interaction.user.mention} ha dato un avviso ({database[target_id]['avvisi']}/3) a {utente.mention}.\n**Motivo:** {motivo}", 
-        discord.Color.yellow()
-    )
 
 @bot.tree.command(name="warn", description="[STAFF] Dai un warn a un giocatore")
 @app_commands.checks.has_permissions(moderate_members=True)
-@app_commands.describe(
-    utente="Il giocatore da warnare",
-    motivo="Motivo del warn"
-)
+@app_commands.describe(utente="Il giocatore da warnare", motivo="Motivo del warn")
 async def warn(interaction: discord.Interaction, utente: discord.User, motivo: str):
     target_id = str(utente.id)
     controlla_utente(target_id)
-    
     timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-    
     database[target_id]["warn"] += 1
     database[target_id]["storico_mod"].append(f"[{timestamp}] 🟡 WARN {database[target_id]['warn']}/3: {motivo} - Moderatore: {interaction.user.display_name}")
-    
     if database[target_id]["warn"] >= 3:
         database[target_id]["ban"] = True
         database[target_id]["storico_mod"].append(f"[{timestamp}] 🔴 BAN AUTOMATICO: 3 warn raggiunti - Moderatore: Sistema")
-    
     salva_database()
-    
-    embed = discord.Embed(
-        title="🟡 WARN",
-        description=f"**Giocatore:** {utente.mention}\n"
-                   f"**Warn N°:** {database[target_id]['warn']}/3\n"
-                   f"**Motivo:** {motivo}\n"
-                   f"**Moderatore:** {interaction.user.mention}",
-        color=discord.Color.orange()
-    )
-    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
-    
+    embed = discord.Embed(title="🟡 WARN", description=f"**Giocatore:** {utente.mention}\n**Warn N°:** {database[target_id]['warn']}/3\n**Motivo:** {motivo}\n**Moderatore:** {interaction.user.mention}", color=discord.Color.orange())
     if database[target_id]["warn"] >= 3:
         embed.add_field(name="🔴 BAN AUTOMATICO", value="3 warn raggiunti! Il giocatore è stato bannato automaticamente.", inline=False)
-    
     await interaction.response.send_message(embed=embed)
-    
-    await invia_log(
-        "🟡 Log Moderazione - Warn", 
-        f"Il moderatore {interaction.user.mention} ha dato un warn ({database[target_id]['warn']}/3) a {utente.mention}.\n**Motivo:** {motivo}", 
-        discord.Color.orange()
-    )
 
 @bot.tree.command(name="ban", description="[STAFF] Banna un giocatore dal server RP")
 @app_commands.checks.has_permissions(ban_members=True)
-@app_commands.describe(
-    utente="Il giocatore da bannare",
-    motivo="Motivo del ban",
-    giorni="Giorni di ban (0 = permanente)"
-)
+@app_commands.describe(utente="Il giocatore da bannare", motivo="Motivo del ban", giorni="Giorni di ban (0 = permanente)")
 async def ban(interaction: discord.Interaction, utente: discord.User, motivo: str, giorni: int = 0):
     target_id = str(utente.id)
     controlla_utente(target_id)
-    
     timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-    
     database[target_id]["ban"] = True
-    
-    if giorni > 0:
-        database[target_id]["storico_mod"].append(f"[{timestamp}] 🔴 BAN {giorni} GIORNI: {motivo} - Moderatore: {interaction.user.display_name}")
-        tipo_ban = f"{giorni} giorni"
-    else:
-        database[target_id]["storico_mod"].append(f"[{timestamp}] ⚫ BAN PERMANENTE: {motivo} - Moderatore: {interaction.user.display_name}")
-        tipo_ban = "PERMANENTE"
-    
+    tipo_ban = f"{giorni} giorni" if giorni > 0 else "PERMANENTE"
+    database[target_id]["storico_mod"].append(f"[{timestamp}] 🔴 BAN {tipo_ban}: {motivo} - Moderatore: {interaction.user.display_name}")
     salva_database()
-    
-    embed = discord.Embed(
-        title="🔴 BAN",
-        description=f"**Giocatore:** {utente.mention}\n"
-                   f"**Tipo:** {tipo_ban}\n"
-                   f"**Motivo:** {motivo}\n"
-                   f"**Moderatore:** {interaction.user.mention}",
-        color=discord.Color.red()
-    )
-    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
-    
+    embed = discord.Embed(title="🔴 BAN", description=f"**Giocatore:** {utente.mention}\n**Tipo:** {tipo_ban}\n**Motivo:** {motivo}\n**Moderatore:** {interaction.user.mention}", color=discord.Color.red())
     try:
-        if giorni > 0:
-            await utente.ban(reason=motivo, delete_message_days=1)
-        else:
-            await utente.ban(reason=motivo, delete_message_days=1)
+        await utente.ban(reason=motivo, delete_message_days=1)
         embed.add_field(name="✅ Eseguito", value="Giocatore bannato dal server Discord.", inline=False)
-    except discord.Forbidden:
-        embed.add_field(name="⚠️ Attenzione", value="Impossibile bannare dal server Discord (permessi insufficienti).", inline=False)
     except Exception as e:
-        embed.add_field(name="⚠️ Errore", value=f"Errore durante il ban: {e}", inline=False)
-    
+        embed.add_field(name="⚠️ Errore", value=str(e), inline=False)
     await interaction.response.send_message(embed=embed)
-    
-    await invia_log(
-        "🔴 Log Moderazione - Ban", 
-        f"Il moderatore {interaction.user.mention} ha bannato {utente.mention} ({tipo_ban}).\n**Motivo:** {motivo}", 
-        discord.Color.red()
-    )
 
 @bot.tree.command(name="rimuovi_avvisi", description="[STAFF] Rimuove tutti gli avvisi di un giocatore")
 @app_commands.checks.has_permissions(moderate_members=True)
-@app_commands.describe(
-    utente="Il giocatore a cui rimuovere gli avvisi"
-)
+@app_commands.describe(utente="Il giocatore a cui rimuovere gli avvisi")
 async def rimuovi_avvisi(interaction: discord.Interaction, utente: discord.User):
     target_id = str(utente.id)
     controlla_utente(target_id)
-    
     vecchi_avvisi = database[target_id]["avvisi"]
     database[target_id]["avvisi"] = 0
-    
-    timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-    database[target_id]["storico_mod"].append(f"[{timestamp}] ✅ AVVISI RIMOSSI - Moderatore: {interaction.user.display_name}")
-    
     salva_database()
-    
     await interaction.response.send_message(f"✅ Rimossi **{vecchi_avvisi}** avvisi da {utente.mention}.")
-    
-    await invia_log(
-        "✅ Log Moderazione - Avvisi Rimossi", 
-        f"Il moderatore {interaction.user.mention} ha rimosso tutti gli avvisi ({vecchi_avvisi}) da {utente.mention}.", 
-        discord.Color.green()
-    )
 
 @bot.tree.command(name="rimuovi_warn", description="[STAFF] Rimuove tutti i warn di un giocatore")
 @app_commands.checks.has_permissions(moderate_members=True)
-@app_commands.describe(
-    utente="Il giocatore a cui rimuovere i warn"
-)
+@app_commands.describe(utente="Il giocatore a cui rimuovere i warn")
 async def rimuovi_warn(interaction: discord.Interaction, utente: discord.User):
     target_id = str(utente.id)
     controlla_utente(target_id)
-    
     vecchi_warn = database[target_id]["warn"]
     database[target_id]["warn"] = 0
-    
-    timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-    database[target_id]["storico_mod"].append(f"[{timestamp}] ✅ WARN RIMOSSI - Moderatore: {interaction.user.display_name}")
-    
     salva_database()
-    
     await interaction.response.send_message(f"✅ Rimossi **{vecchi_warn}** warn da {utente.mention}.")
-    
-    await invia_log(
-        "✅ Log Moderazione - Warn Rimossi", 
-        f"Il moderatore {interaction.user.mention} ha rimosso tutti i warn ({vecchi_warn}) da {utente.mention}.", 
-        discord.Color.green()
-    )
 
 @bot.tree.command(name="rimuovi_ban", description="[STAFF] Rimuove il ban di un giocatore")
 @app_commands.checks.has_permissions(ban_members=True)
-@app_commands.describe(
-    utente="Il giocatore da sbannare"
-)
+@app_commands.describe(utente="Il giocatore da sbannare")
 async def rimuovi_ban(interaction: discord.Interaction, utente: discord.User):
     target_id = str(utente.id)
     controlla_utente(target_id)
-    
     database[target_id]["ban"] = False
-    
-    timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-    database[target_id]["storico_mod"].append(f"[{timestamp}] ✅ BAN RIMOSSO - Moderatore: {interaction.user.display_name}")
-    
     salva_database()
-    
     try:
         await interaction.guild.unban(utente)
-        msg = f"✅ Ban rimosso per {utente.mention}. Giocatore sbannato dal server Discord."
-    except discord.NotFound:
-        msg = f"✅ Ban rimosso per {utente.mention}. Il giocatore non era bannato da Discord."
-    except discord.Forbidden:
-        msg = f"✅ Ban rimosso per {utente.mention}. Impossibile sbannare da Discord (permessi insufficienti)."
-    
+        msg = f"✅ Ban rimosso per {utente.mention}."
+    except:
+        msg = f"✅ Ban rimosso nel database. (Discord non ha permessi o utente non bannato)"
     await interaction.response.send_message(msg)
-    
-    await invia_log(
-        "✅ Log Moderazione - Ban Rimosso", 
-        f"Il moderatore {interaction.user.mention} ha rimosso il ban di {utente.mention}.", 
-        discord.Color.green()
-    )
 
 @bot.tree.command(name="stato_mod", description="[STAFF] Visualizza lo stato moderazione di un giocatore")
 @app_commands.checks.has_permissions(moderate_members=True)
-@app_commands.describe(
-    utente="Il giocatore di cui vedere lo stato"
-)
+@app_commands.describe(utente="Il giocatore di cui vedere lo stato")
 async def stato_mod(interaction: discord.Interaction, utente: discord.User):
     target_id = str(utente.id)
     controlla_utente(target_id)
-    
     data = database[target_id]
-    
-    embed = discord.Embed(
-        title=f"📋 Stato Moderazione: {utente.display_name}",
-        color=discord.Color.blue()
-    )
-    
+    embed = discord.Embed(title=f"📋 Stato Moderazione: {utente.display_name}", color=discord.Color.blue())
     avvisi_emoji = "🟢" if data["avvisi"] == 0 else "🟡" if data["avvisi"] < 3 else "🔴"
     warn_emoji = "🟢" if data["warn"] == 0 else "🟡" if data["warn"] < 3 else "🔴"
     ban_emoji = "🟢" if not data["ban"] else "🔴"
-    
     embed.add_field(name=f"{avvisi_emoji} Avvisi", value=f"**{data['avvisi']}/3**", inline=True)
     embed.add_field(name=f"{warn_emoji} Warn", value=f"**{data['warn']}/3**", inline=True)
     embed.add_field(name=f"{ban_emoji} Ban", value=f"**{'Sì' if data['ban'] else 'No'}**", inline=True)
-    
     if data["storico_mod"]:
-        storico = "\n".join(data["storico_mod"][-10:])
-        embed.add_field(name="📜 Ultime azioni (max 10)", value=storico, inline=False)
-    else:
-        embed.add_field(name="📜 Storico", value="Nessuna azione registrata.", inline=False)
-    
+        embed.add_field(name="📜 Ultime azioni (max 10)", value="\n".join(data["storico_mod"][-10:]), inline=False)
     await interaction.response.send_message(embed=embed)
 
 # ==========================================
@@ -1672,30 +1291,12 @@ class NegozioView(discord.ui.View):
     
     def update_buttons(self):
         self.clear_items()
-        
-        back_button = discord.ui.Button(
-            label="◀️ Indietro", 
-            style=discord.ButtonStyle.gray,
-            disabled=self.current_page == 1,
-            custom_id="negozio_back"
-        )
+        back_button = discord.ui.Button(label="◀️ Indietro", style=discord.ButtonStyle.gray, disabled=self.current_page == 1, custom_id="negozio_back")
         back_button.callback = self.go_back
         self.add_item(back_button)
-        
-        page_button = discord.ui.Button(
-            label=f"📄 {self.current_page}/{self.total_pages}", 
-            style=discord.ButtonStyle.green,
-            disabled=True,
-            custom_id="negozio_page"
-        )
+        page_button = discord.ui.Button(label=f"📄 {self.current_page}/{self.total_pages}", style=discord.ButtonStyle.green, disabled=True, custom_id="negozio_page")
         self.add_item(page_button)
-        
-        next_button = discord.ui.Button(
-            label="Avanti ▶️", 
-            style=discord.ButtonStyle.gray,
-            disabled=self.current_page == self.total_pages,
-            custom_id="negozio_next"
-        )
+        next_button = discord.ui.Button(label="Avanti ▶️", style=discord.ButtonStyle.gray, disabled=self.current_page == self.total_pages, custom_id="negozio_next")
         next_button.callback = self.go_next
         self.add_item(next_button)
     
@@ -1718,21 +1319,11 @@ async def negozio(interaction: discord.Interaction):
     total_pages = math.ceil(len(items) / ITEMS_PER_PAGE)
     
     def create_embed(page):
-        embed = discord.Embed(
-            title=f"🛒 Negozio di Los Santos (Pagina {page}/{total_pages})", 
-            color=discord.Color.gold()
-        )
-        
+        embed = discord.Embed(title=f"🛒 Negozio di Los Santos (Pagina {page}/{total_pages})", color=discord.Color.gold())
         start_idx = (page - 1) * ITEMS_PER_PAGE
         end_idx = min(start_idx + ITEMS_PER_PAGE, len(items))
-        
         for item, dettagli in items[start_idx:end_idx]:
-            embed.add_field(
-                name=f"📦 {item.upper()}", 
-                value=f"Prezzo: **{dettagli['prezzo']}{val}**\nInfo: *{dettagli['descrizione']}*", 
-                inline=False
-            )
-        
+            embed.add_field(name=f"📦 {item.upper()}", value=f"Prezzo: **{dettagli['prezzo']}{val}**\nInfo: *{dettagli['descrizione']}*", inline=False)
         embed.set_footer(text=f"Usa i bottoni qui sotto per navigare")
         return embed
     
@@ -1746,28 +1337,18 @@ async def compra_oggetto(interaction: discord.Interaction, nome_oggetto: str):
     user_id = str(interaction.user.id)
     controlla_utente(user_id)
     nome_oggetto = nome_oggetto.lower()
-    
     if nome_oggetto not in database["STORE"]:
         await interaction.response.send_message("❌ Questo articolo non è venduto nel negozio.", ephemeral=True)
         return
-        
     prezzo = database["STORE"][nome_oggetto]["prezzo"]
     val = database["SETTINGS"]["valuta"]
-    
     if database[user_id]["contanti"] < prezzo:
         await interaction.response.send_message(f"❌ Non hai abbastanza contanti ({prezzo}{val} richiesti).", ephemeral=True)
         return
-        
     database[user_id]["contanti"] -= prezzo
     database[user_id]["inventario"][nome_oggetto] = database[user_id]["inventario"].get(nome_oggetto, 0) + 1
     salva_database()
     await interaction.response.send_message(f"🛍️ Hai comprato 1x **{nome_oggetto}** per **{prezzo}{val}**.")
-    
-    await invia_log(
-        "🛒 Log Store - Acquisto", 
-        f"L'utente {interaction.user.mention} ha acquistato **1x {nome_oggetto}** spendendo **{prezzo}{val}** in contanti.", 
-        discord.Color.gold()
-    )
 
 @bot.tree.command(name="aggiungi_oggetto_negozio", description="[ADMIN] Aggiungi o modifica un articolo in vendita al negozio")
 @app_commands.checks.has_permissions(administrator=True)
@@ -1775,12 +1356,6 @@ async def aggiungi_oggetto_negozio(interaction: discord.Interaction, nome: str, 
     database["STORE"][nome.lower()] = {"prezzo": prezzo, "descrizione": descrizione}
     salva_database()
     await interaction.response.send_message(f"✅ Articolo **{nome}** configurato nello store a {prezzo}.")
-    
-    await invia_log(
-        "🛠️ Log Admin - Negozio", 
-        f"L'amministratore {interaction.user.mention} ha aggiunto/modificato l'articolo **{nome}** nello Store (Prezzo: {prezzo}).", 
-        discord.Color.purple()
-    )
 
 @bot.tree.command(name="rimuovi_oggetto_negozio", description="[ADMIN] Rimuovi permanentemente un articolo dal negozio")
 @app_commands.checks.has_permissions(administrator=True)
@@ -1790,12 +1365,6 @@ async def rimuovi_oggetto_negozio(interaction: discord.Interaction, nome: str):
         del database["STORE"][nome_l]
         salva_database()
         await interaction.response.send_message(f"🗑️ Articolo **{nome}** rimosso dal negozio.")
-        
-        await invia_log(
-            "🛠️ Log Admin - Negozio", 
-            f"L'amministratore {interaction.user.mention} ha rimosso l'articolo **{nome}** dal catalogo del negozio.", 
-            discord.Color.purple()
-        )
     else:
         await interaction.response.send_message("❌ Articolo non presente nello store.", ephemeral=True)
 
@@ -1805,211 +1374,108 @@ async def rimuovi_oggetto_negozio(interaction: discord.Interaction, nome: str):
 
 @bot.tree.command(name="dai_oggetto", description="[ADMIN] Aggiunge un oggetto all'inventario di un giocatore")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    utente="Il giocatore che riceverà l'oggetto",
-    oggetto="Nome dell'oggetto da aggiungere",
-    quantita="Quantità da aggiungere (default: 1)"
-)
+@app_commands.describe(utente="Il giocatore che riceverà l'oggetto", oggetto="Nome dell'oggetto da aggiungere", quantita="Quantità da aggiungere (default: 1)")
 async def dai_oggetto(interaction: discord.Interaction, utente: discord.User, oggetto: str, quantita: int = 1):
     target_id = str(utente.id)
     controlla_utente(target_id)
     oggetto = oggetto.lower()
-    
-    if quantita <= 0:
-        await interaction.response.send_message("❌ La quantità deve essere positiva.", ephemeral=True)
+    if quantita <= 0 or quantita > 1000:
+        await interaction.response.send_message("❌ Quantità non valida.", ephemeral=True)
         return
-    
-    if quantita > 1000:
-        await interaction.response.send_message("❌ Massimo 1000 unità per volta.", ephemeral=True)
-        return
-    
     database[target_id]["inventario"][oggetto] = database[target_id]["inventario"].get(oggetto, 0) + quantita
     salva_database()
-    
     await interaction.response.send_message(f"✅ Aggiunto **{quantita}x {oggetto}** all'inventario di {utente.mention}.")
-    
-    await invia_log(
-        "🎁 Log Admin - Oggetto Aggiunto", 
-        f"L'amministratore {interaction.user.mention} ha aggiunto **{quantita}x {oggetto}** all'inventario di {utente.mention}.", 
-        discord.Color.green()
-    )
 
 @bot.tree.command(name="rimuovi_oggetto", description="[ADMIN] Rimuove un oggetto dall'inventario di un giocatore")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    utente="Il giocatore a cui rimuovere l'oggetto",
-    oggetto="Nome dell'oggetto da rimuovere",
-    quantita="Quantità da rimuovere (default: 1)"
-)
+@app_commands.describe(utente="Il giocatore a cui rimuovere l'oggetto", oggetto="Nome dell'oggetto da rimuovere", quantita="Quantità da rimuovere (default: 1)")
 async def rimuovi_oggetto(interaction: discord.Interaction, utente: discord.User, oggetto: str, quantita: int = 1):
     target_id = str(utente.id)
     controlla_utente(target_id)
     oggetto = oggetto.lower()
-    
     if quantita <= 0:
-        await interaction.response.send_message("❌ La quantità deve essere positiva.", ephemeral=True)
+        await interaction.response.send_message("❌ Quantità non valida.", ephemeral=True)
         return
-    
     current_qty = database[target_id]["inventario"].get(oggetto, 0)
-    
     if current_qty < quantita:
-        await interaction.response.send_message(f"❌ {utente.mention} ha solo **{current_qty}x {oggetto}**. Impossibile rimuoverne {quantita}.", ephemeral=True)
+        await interaction.response.send_message(f"❌ {utente.mention} ha solo **{current_qty}x {oggetto}**.", ephemeral=True)
         return
-    
     database[target_id]["inventario"][oggetto] -= quantita
-    
     if database[target_id]["inventario"][oggetto] == 0:
         del database[target_id]["inventario"][oggetto]
-    
     salva_database()
-    
     await interaction.response.send_message(f"✅ Rimosso **{quantita}x {oggetto}** dall'inventario di {utente.mention}.")
-    
-    await invia_log(
-        "🗑️ Log Admin - Oggetto Rimosso", 
-        f"L'amministratore {interaction.user.mention} ha rimosso **{quantita}x {oggetto}** dall'inventario di {utente.mention}.", 
-        discord.Color.red()
-    )
 
 @bot.tree.command(name="svuota_inventario", description="[ADMIN] Svuota completamente l'inventario di un giocatore")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    utente="Il giocatore a cui svuotare l'inventario"
-)
+@app_commands.describe(utente="Il giocatore a cui svuotare l'inventario")
 async def svuota_inventario(interaction: discord.Interaction, utente: discord.User):
     target_id = str(utente.id)
     controlla_utente(target_id)
-    
     total_items = sum(database[target_id]["inventario"].values())
-    
     database[target_id]["inventario"] = {}
     salva_database()
-    
     await interaction.response.send_message(f"🗑️ Inventario di {utente.mention} completamente svuotato! ({total_items} oggetti rimossi)")
-    
-    await invia_log(
-        "🗑️ Log Admin - Inventario Svuotato", 
-        f"L'amministratore {interaction.user.mention} ha **svuotato completamente** l'inventario di {utente.mention} ({total_items} oggetti).", 
-        discord.Color.red()
-    )
 
 @bot.tree.command(name="imposta_oggetto", description="[ADMIN] Imposta una quantità esatta di un oggetto nell'inventario")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    utente="Il giocatore target",
-    oggetto="Nome dell'oggetto",
-    quantita="Nuova quantità esatta (0 per rimuovere)"
-)
+@app_commands.describe(utente="Il giocatore target", oggetto="Nome dell'oggetto", quantita="Nuova quantità esatta (0 per rimuovere)")
 async def imposta_oggetto(interaction: discord.Interaction, utente: discord.User, oggetto: str, quantita: int):
     target_id = str(utente.id)
     controlla_utente(target_id)
     oggetto = oggetto.lower()
-    
-    if quantita < 0:
-        await interaction.response.send_message("❌ La quantità non può essere negativa.", ephemeral=True)
+    if quantita < 0 or quantita > 1000:
+        await interaction.response.send_message("❌ Quantità non valida.", ephemeral=True)
         return
-    
-    if quantita > 1000:
-        await interaction.response.send_message("❌ Massimo 1000 unità.", ephemeral=True)
-        return
-    
     old_qty = database[target_id]["inventario"].get(oggetto, 0)
-    
     if quantita == 0:
         if oggetto in database[target_id]["inventario"]:
             del database[target_id]["inventario"][oggetto]
-        await interaction.response.send_message(f"✅ Rimosso completamente **{oggetto}** dall'inventario di {utente.mention} (aveva {old_qty}x).")
     else:
         database[target_id]["inventario"][oggetto] = quantita
-        await interaction.response.send_message(f"✅ Impostato **{oggetto}** a **{quantita}x** nell'inventario di {utente.mention} (prima: {old_qty}x).")
-    
     salva_database()
-    
-    await invia_log(
-        "⚙️ Log Admin - Oggetto Impostato", 
-        f"L'amministratore {interaction.user.mention} ha impostato **{oggetto}** a **{quantita}x** per {utente.mention} (prima: {old_qty}x).", 
-        discord.Color.blue()
-    )
+    await interaction.response.send_message(f"✅ Impostato **{oggetto}** a **{quantita}x** nell'inventario di {utente.mention} (prima: {old_qty}x).")
 
 @bot.tree.command(name="vedi_inventario", description="[ADMIN] Vedi l'inventario dettagliato di qualsiasi giocatore")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    utente="Il giocatore di cui vedere l'inventario"
-)
+@app_commands.describe(utente="Il giocatore di cui vedere l'inventario")
 async def vedi_inventario(interaction: discord.Interaction, utente: discord.User):
     target_id = str(utente.id)
     controlla_utente(target_id)
-    
     inv = database[target_id]["inventario"]
-    
-    embed = discord.Embed(
-        title=f"🎒 Inventario di {utente.display_name}",
-        description=f"**ID:** {utente.id}\n**Lavoro:** {database[target_id].get('lavoro', 'N/D')}",
-        color=discord.Color.blue()
-    )
-    
+    embed = discord.Embed(title=f"🎒 Inventario di {utente.display_name}", description=f"**ID:** {utente.id}\n**Lavoro:** {database[target_id].get('lavoro', 'N/D')}", color=discord.Color.blue())
     if inv:
-        corpo = ""
-        for item, qta in sorted(inv.items()):
-            corpo += f"• **{item.capitalize()}**: {qta} unità\n"
+        corpo = "\n".join([f"• **{item.capitalize()}**: {qta} unità" for item, qta in sorted(inv.items())])
         embed.add_field(name="📦 Oggetti", value=corpo, inline=False)
-        embed.set_footer(text=f"Totale oggetti: {sum(inv.values())} | Tipi diversi: {len(inv)}")
     else:
         embed.add_field(name="📦 Oggetti", value="*Inventario completamente vuoto*", inline=False)
-    
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="dai_soldi", description="[ADMIN] Aggiunge denaro al contante di un giocatore")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    utente="Il giocatore che riceverà i soldi",
-    importo="Quantità di denaro da aggiungere"
-)
+@app_commands.describe(utente="Il giocatore che riceverà i soldi", importo="Quantità di denaro da aggiungere")
 async def dai_soldi(interaction: discord.Interaction, utente: discord.User, importo: int):
     target_id = str(utente.id)
     controlla_utente(target_id)
-    val = database["SETTINGS"]["valuta"]
-    
     if importo <= 0:
         await interaction.response.send_message("❌ L'importo deve essere positivo.", ephemeral=True)
         return
-    
     database[target_id]["contanti"] += importo
     salva_database()
-    
-    await interaction.response.send_message(f"💸 Aggiunto **{importo}{val}** ai contanti di {utente.mention}.")
-    
-    await invia_log(
-        "💰 Log Admin - Soldi Aggiunti", 
-        f"L'amministratore {interaction.user.mention} ha aggiunto **{importo}{val}** ai contanti di {utente.mention}.", 
-        discord.Color.green()
-    )
+    await interaction.response.send_message(f"💸 Aggiunto **{importo}€** ai contanti di {utente.mention}.")
 
 @bot.tree.command(name="dai_soldi_banca", description="[ADMIN] Aggiunge denaro al conto bancario di un giocatore")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    utente="Il giocatore che riceverà i soldi",
-    importo="Quantità di denaro da aggiungere in banca"
-)
+@app_commands.describe(utente="Il giocatore che riceverà i soldi", importo="Quantità di denaro da aggiungere in banca")
 async def dai_soldi_banca(interaction: discord.Interaction, utente: discord.User, importo: int):
     target_id = str(utente.id)
     controlla_utente(target_id)
-    val = database["SETTINGS"]["valuta"]
-    
     if importo <= 0:
         await interaction.response.send_message("❌ L'importo deve essere positivo.", ephemeral=True)
         return
-    
     database[target_id]["banca"] += importo
     salva_database()
-    
-    await interaction.response.send_message(f"🏦 Aggiunto **{importo}{val}** al conto bancario di {utente.mention}.")
-    
-    await invia_log(
-        "💰 Log Admin - Soldi Banca Aggiunti", 
-        f"L'amministratore {interaction.user.mention} ha aggiunto **{importo}{val}** alla banca di {utente.mention}.", 
-        discord.Color.green()
-    )
+    await interaction.response.send_message(f"🏦 Aggiunto **{importo}€** alla banca di {utente.mention}.")
 
 # ==========================================
 # 13. TELEFONO & SOCIAL
@@ -2017,237 +1483,99 @@ async def dai_soldi_banca(interaction: discord.Interaction, utente: discord.User
 
 @bot.tree.command(name="anonimo", description="Invia un messaggio anonimo nella chat oscura")
 async def anonimo(interaction: discord.Interaction, messaggio: str):
-    embed = discord.Embed(
-        title="🥷 Messaggio Anonimo",
-        description=f"« {messaggio} »",
-        color=discord.Color.default()
-    )
+    embed = discord.Embed(title="🥷 Messaggio Anonimo", description=f"« {messaggio} »", color=discord.Color.default())
     await interaction.response.send_message("Inviato anonimamente.", ephemeral=True)
     await interaction.channel.send(embed=embed)
-    
-    await invia_log(
-        "🥷 Log Chat Oscura (Anonimo)", 
-        f"L'utente {interaction.user.mention} (`{interaction.user.id}`) ha inviato in chat l'anonimo:\n« *{messaggio}* »", 
-        discord.Color.dark_gray()
-    )
 
 @bot.tree.command(name="twitter", description="Posta un tweet sul canale social")
 async def twitter(interaction: discord.Interaction, messaggio: str):
-    embed = discord.Embed(
-        title="🐦 Twitter RP",
-        description=f"**@{interaction.user.display_name}**\n\n{messaggio}",
-        color=discord.Color.from_rgb(29, 161, 242)
-    )
-    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
-    await interaction.response.send_message("Tweet pubblicato!", ephemeral=True)
-    await interaction.channel.send(embed=embed)
+    embed = discord.Embed(title="🐦 Twitter RP", description=f"**@{interaction.user.display_name}**\n\n{messaggio}", color=discord.Color.from_rgb(29, 161, 242))
+    await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="chiama", description="Invia un alert di chiamata sul telefono di un utente")
 async def chiama(interaction: discord.Interaction, utente: discord.User):
-    embed = discord.Embed(
-        title="📱 Chiamata in Entrata",
-        description=f"📞 {interaction.user.mention} ti sta chiamando sul telefono di Los Santos!\nEntra in un canale vocale per rispondergli.",
-        color=discord.Color.green()
-    )
+    embed = discord.Embed(title="📱 Chiamata in Entrata", description=f"📞 {interaction.user.mention} ti sta chiamando!", color=discord.Color.green())
     try:
         await utente.send(embed=embed)
-        await interaction.response.send_message(f"✅ Inviata richiesta di chiamata a {utente.mention}.", ephemeral=True)
-    except discord.Forbidden:
-        await interaction.response.send_message(f"❌ Impossibile inviare la chiamata a {utente.mention} (DM chiusi).", ephemeral=True)
+        await interaction.response.send_message(f"✅ Chiamata inviata a {utente.mention}.", ephemeral=True)
+    except:
+        await interaction.response.send_message(f"❌ Impossibile chiamare {utente.mention}.", ephemeral=True)
 
 # ==========================================
 # 14. SISTEMA SMS
 # ==========================================
 
 @bot.tree.command(name="sms", description="Invia un SMS a un giocatore")
-@app_commands.describe(
-    destinatario="Chi riceverà l'SMS",
-    messaggio="Il testo del messaggio"
-)
+@app_commands.describe(destinatario="Chi riceverà l'SMS", messaggio="Il testo del messaggio")
 async def sms(interaction: discord.Interaction, destinatario: discord.User, messaggio: str):
     user_id = str(interaction.user.id)
     controlla_utente(user_id)
     target_id = str(destinatario.id)
     controlla_utente(target_id)
-    
-    if destinatario.id == interaction.user.id:
-        await interaction.response.send_message("❌ Non puoi inviare SMS a te stesso!", ephemeral=True)
+    if destinatario.id == interaction.user.id or len(messaggio) > 500:
+        await interaction.response.send_message("❌ Operazione non valida.", ephemeral=True)
         return
-    
-    if len(messaggio) > 500:
-        await interaction.response.send_message("❌ Il messaggio è troppo lungo (max 500 caratteri).", ephemeral=True)
-        return
-    
     if "telefono" not in database[user_id]["inventario"] or database[user_id]["inventario"]["telefono"] <= 0:
-        await interaction.response.send_message("❌ Non hai un telefono per inviare SMS! Compra un telefono al negozio.", ephemeral=True)
+        await interaction.response.send_message("❌ Non hai un telefono!", ephemeral=True)
         return
-    
     timestamp = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-    sms_data = {
-        "mittente_id": user_id,
-        "mittente_nome": interaction.user.display_name,
-        "messaggio": messaggio,
-        "timestamp": timestamp
-    }
-    
+    sms_data = {"mittente_id": user_id, "mittente_nome": interaction.user.display_name, "messaggio": messaggio, "timestamp": timestamp}
     database[target_id]["sms_ricevuti"].append(sms_data)
     salva_database()
-    
-    embed = discord.Embed(
-        title="📱 SMS Inviato",
-        description=f"✉️ {interaction.user.mention} ha inviato un SMS a {destinatario.mention}.",
-        color=discord.Color.blue()
-    )
-    await interaction.response.send_message(embed=embed)
-    
+    await interaction.response.send_message(f"✉️ SMS inviato a {destinatario.mention}.", ephemeral=True)
     try:
-        notifica_embed = discord.Embed(
-            title="📲 Nuovo SMS Ricevuto",
-            description=f"**Da:** {interaction.user.mention}\n"
-                       f"**Ora:** {timestamp}\n"
-                       f"**Messaggio:** {messaggio}\n\n"
-                       f"Usa `/leggi_sms` per vedere tutti i tuoi messaggi.",
-            color=discord.Color.green()
-        )
-        await destinatario.send(embed=notifica_embed)
-    except discord.Forbidden:
+        await destinatario.send(embed=discord.Embed(title="📲 Nuovo SMS", description=f"**Da:** {interaction.user.mention}\n**Ora:** {timestamp}\n**Messaggio:** {messaggio}", color=discord.Color.green()))
+    except:
         pass
-    
-    await invia_log(
-        "📱 Log SMS", 
-        f"L'utente {interaction.user.mention} ha inviato un SMS a {destinatario.mention}:\n« {messaggio} »", 
-        discord.Color.blue()
-    )
 
 @bot.tree.command(name="leggi_sms", description="Leggi tutti gli SMS ricevuti")
-async def leggi_sms(interaction: discord.Interaction, pagina: int = 1):
+async def leggi_sms(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
     controlla_utente(user_id)
-    
     sms_list = database[user_id]["sms_ricevuti"]
-    
     if not sms_list:
-        await interaction.response.send_message("📭 La tua casella SMS è vuota.", ephemeral=True)
+        await interaction.response.send_message("📭 Casella SMS vuota.", ephemeral=True)
         return
-    
-    sms_list_ordinati = list(reversed(sms_list))
-    sms_per_pagina = 5
-    total_pages = math.ceil(len(sms_list_ordinati) / sms_per_pagina)
-    
-    if pagina < 1 or pagina > total_pages:
-        await interaction.response.send_message(f"❌ Pagina non valida. Pagine disponibili: 1-{total_pages}", ephemeral=True)
-        return
-    
-    embed = discord.Embed(
-        title=f"📱 I tuoi SMS Ricevuti (Pagina {pagina}/{total_pages})",
-        color=discord.Color.blue()
-    )
-    
-    start_idx = (pagina - 1) * sms_per_pagina
-    end_idx = min(start_idx + sms_per_pagina, len(sms_list_ordinati))
-    
-    for sms in sms_list_ordinati[start_idx:end_idx]:
-        embed.add_field(
-            name=f"📩 Da: {sms['mittente_nome']} • {sms['timestamp']}",
-            value=f"« {sms['messaggio']} »",
-            inline=False
-        )
-    
-    embed.set_footer(text=f"Usa /leggi_sms pagina:<numero> • /cancella_sms per svuotare la casella")
+    embed = discord.Embed(title="📱 I tuoi SMS Ricevuti", color=discord.Color.blue())
+    for sms in list(reversed(sms_list))[:10]:
+        embed.add_field(name=f"📩 Da: {sms['mittente_nome']} • {sms['timestamp']}", value=f"« {sms['messaggio']} »", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="cancella_sms", description="Svuota la tua casella SMS")
 async def cancella_sms(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
     controlla_utente(user_id)
-    
-    num_sms = len(database[user_id]["sms_ricevuti"])
     database[user_id]["sms_ricevuti"] = []
     salva_database()
-    
-    await interaction.response.send_message(f"🗑️ Hai cancellato **{num_sms}** SMS dalla tua casella.", ephemeral=True)
+    await interaction.response.send_message("🗑️ Casella SMS svuotata.", ephemeral=True)
 
 # ==========================================
 # 15. SISTEMA AZIONI RP
 # ==========================================
 
 @bot.tree.command(name="azione", description="Esegui un'azione RP visibile a tutti nel canale")
-@app_commands.describe(
-    azione="Descrivi l'azione che stai compiendo",
-    target="Giocatore coinvolto nell'azione (opzionale)"
-)
+@app_commands.describe(azione="Descrivi l'azione che stai compiendo", target="Giocatore coinvolto nell'azione (opzionale)")
 async def azione(interaction: discord.Interaction, azione: str, target: discord.User = None):
-    user_id = str(interaction.user.id)
-    controlla_utente(user_id)
-    
-    if len(azione) > 1000:
-        await interaction.response.send_message("❌ L'azione è troppo lunga (max 1000 caratteri).", ephemeral=True)
+    if len(azione) > 1000 or len(azione) < 3:
+        await interaction.response.send_message("❌ Azione troppo lunga o corta.", ephemeral=True)
         return
-    
-    if len(azione) < 3:
-        await interaction.response.send_message("❌ L'azione è troppo corta (min 3 caratteri).", ephemeral=True)
-        return
-    
     if target and target.id == interaction.user.id:
-        await interaction.response.send_message("❌ Non puoi fare un'azione su te stesso! Usa /azione senza target.", ephemeral=True)
+        await interaction.response.send_message("❌ Non puoi targettare te stesso.", ephemeral=True)
         return
-    
-    if target:
-        descrizione = f"🎭 **{interaction.user.mention}** *{azione}* **{target.mention}**"
-    else:
-        descrizione = f"🎭 **{interaction.user.mention}** *{azione}*"
-    
-    embed = discord.Embed(
-        title="🎬 Azione Roleplay",
-        description=descrizione,
-        color=discord.Color.purple()
-    )
-    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
-    embed.set_footer(text=f"ID Azione: {interaction.user.id} • Usa /azione per fare un'azione")
-    
+    descrizione = f"🎭 **{interaction.user.mention}** *{azione}*" + (f" **{target.mention}**" if target else "")
+    embed = discord.Embed(title="🎬 Azione Roleplay", description=descrizione, color=discord.Color.purple())
     await interaction.response.send_message(embed=embed)
-    
-    await invia_log(
-        "🎭 Log Azione RP", 
-        f"L'utente {interaction.user.mention} ha eseguito un'azione{' su ' + target.mention if target else ''}:\n*{azione}*", 
-        discord.Color.purple()
-    )
 
 @bot.tree.command(name="azione_master", description="[ADMIN] Esegui un'azione RP come Game Master (Narratore)")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    azione="Descrivi l'azione/scena che accade nel mondo",
-    target="Giocatore coinvolto (opzionale)"
-)
+@app_commands.describe(azione="Descrivi l'azione/scena che accade nel mondo", target="Giocatore coinvolto (opzionale)")
 async def azione_master(interaction: discord.Interaction, azione: str, target: discord.User = None):
-    if len(azione) > 1500:
-        await interaction.response.send_message("❌ L'azione è troppo lunga (max 1500 caratteri).", ephemeral=True)
+    if len(azione) > 1500 or len(azione) < 5:
+        await interaction.response.send_message("❌ Azione troppo lunga o corta.", ephemeral=True)
         return
-    
-    if len(azione) < 5:
-        await interaction.response.send_message("❌ L'azione è troppo corta (min 5 caratteri).", ephemeral=True)
-        return
-    
-    if target:
-        descrizione = f"📖 **{azione}** *({target.mention})*"
-    else:
-        descrizione = f"📖 **{azione}**"
-    
-    embed = discord.Embed(
-        title="📜 Azione del Game Master",
-        description=descrizione,
-        color=discord.Color.dark_gold()
-    )
-    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
-    embed.set_footer(text="Azione Narratore • Game Master")
-    
+    descrizione = f"📖 **{azione}**" + (f" *({target.mention})*" if target else "")
+    embed = discord.Embed(title="📜 Azione del Game Master", description=descrizione, color=discord.Color.dark_gold())
     await interaction.response.send_message(embed=embed)
-    
-    await invia_log(
-        "📜 Log Azione GM", 
-        f"Il Game Master {interaction.user.mention} ha narrato un'azione{' su ' + target.mention if target else ''}:\n*{azione}*", 
-        discord.Color.dark_gold()
-    )
 
 # ==========================================
 # 16. GESTIONE STATO SESSIONE & UTILITY RP
@@ -2255,57 +1583,152 @@ async def azione_master(interaction: discord.Interaction, azione: str, target: d
 
 @bot.tree.command(name="rpon", description="🟢 Attiva la sessione RP - Apre la città al Roleplay")
 async def rpon(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="🌆 MIDNIGHT STREET RP 3.0",
-        description="**La sessione di Roleplay è ora APERTA!**\n\n"
-                   "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
-                   "🏙️ **STATO SERVER**\n"
-                   "```diff\n"
-                   "+ SERVER ONLINE\n"
-                   "+ RP ATTIVO\n"
-                   "+ ACCESSO CONSENTITO\n"
-                   "```\n\n"
-                   "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
-                   "📜 **REGOLAMENTO ATTIVO**\n"
-                   "• Rispettare il regolamento IC/OOC\n"
-                   "• Mantenere un comportamento consono al RP\n"
-                   "• Evitare metagaming e powergaming\n\n"
-                   "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
-                   "🚗 **BUON DIVERTIMENTO A TUTTI!**\n"
-                   "*Che il Roleplay abbia inizio!*",
-        color=discord.Color.green()
-    )
-    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
-    embed.set_footer(text="Midnight Street RP • Sessione Attiva")
-    
+    embed = discord.Embed(title="🌆 MIDNIGHT STREET RP 3.0", description="**La sessione di Roleplay è ora APERTA!**\n\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n🏙️ **STATO SERVER**\n```diff\n+ SERVER ONLINE\n+ RP ATTIVO\n+ ACCESSO CONSENTITO\n```\n\n🚗 **BUON DIVERTIMENTO A TUTTI!**", color=discord.Color.green())
     await interaction.response.send_message(content="# 🌟 RP ON @everyone @here", embed=embed)
 
 @bot.tree.command(name="rpoff", description="🔴 Disattiva la sessione RP - Chiude la città")
 async def rpoff(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="🌃 MIDNIGHT STREET RP 3.0",
-        description="**La sessione di Roleplay è stata CHIUSA!**\n\n"
-                   "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
-                   "🏙️ **STATO SERVER**\n"
-                   "```diff\n"
-                   "- SERVER IN PAUSA\n"
-                   "- RP DISATTIVATO\n"
-                   "- ACCESSO NEGATO\n"
-                   "```\n\n"
-                   "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
-                   "📜 **AVVISI IMPORTANTI**\n"
-                   "• Disconnettersi dalla città\n"
-                   "• Salvare il proprio equipaggiamento\n"
-                   "• Attendere la prossima sessione\n\n"
-                   "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
-                   "🌙 **GRAZIE A TUTTI I CITTADINI!**\n"
-                   "*Ci rivediamo alla prossima sessione!*",
-        color=discord.Color.red()
-    )
-    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
-    embed.set_footer(text="Midnight Street RP • Sessione Terminata")
-    
+    embed = discord.Embed(title="🌃 MIDNIGHT STREET RP 3.0", description="**La sessione di Roleplay è stata CHIUSA!**\n\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n🏙️ **STATO SERVER**\n```diff\n- SERVER IN PAUSA\n- RP DISATTIVATO\n- ACCESSO NEGATO\n```\n\n🌙 **GRAZIE A TUTTI I CITTADINI!**", color=discord.Color.red())
     await interaction.response.send_message(content="# 🌙 RP OFF @everyone @here", embed=embed)
+
+# ==========================================
+# 17. NUOVI COMANDI RP (AGGIUNTI DA ME)
+# ==========================================
+
+@bot.tree.command(name="sondaggio", description="Crea un sondaggio con reazioni per votare")
+@app_commands.describe(domanda="La domanda del sondaggio", opzioni="Opzioni separate da virgola (max 5)")
+async def sondaggio(interaction: discord.Interaction, domanda: str, opzioni: str):
+    opzioni_lista = [x.strip() for x in opzioni.split(",") if x.strip()][:5]
+    if len(opzioni_lista) < 2:
+        await interaction.response.send_message("❌ Devi fornire almeno 2 opzioni.", ephemeral=True)
+        return
+    
+    emoji_list = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    descrizione = ""
+    for i, opzione in enumerate(opzioni_lista):
+        descrizione += f"{emoji_list[i]} {opzione}\n"
+    
+    embed = discord.Embed(title=f"📊 Sondaggio: {domanda}", description=descrizione, color=discord.Color.blue())
+    embed.set_footer(text=f"Sondaggio creato da {interaction.user.display_name}")
+    
+    await interaction.response.send_message(embed=embed)
+    msg = await interaction.original_response()
+    for i in range(len(opzioni_lista)):
+        await msg.add_reaction(emoji_list[i])
+
+@bot.tree.command(name="tempo", description="Mostra il meteo RP attuale a Los Santos")
+async def tempo(interaction: discord.Interaction):
+    meteo = random.choice(["☀️ Soleggiato", "🌤️ Parzialmente nuvoloso", "☁️ Nuvoloso", "🌧️ Piovoso", "⛈️ Temporale", "🌙 Notte serena", "🌫️ Nebbia fitta"])
+    temperatura = random.randint(10, 35)
+    embed = discord.Embed(title="🌤️ Meteo RP - Los Santos", description=f"**Cielo:** {meteo}\n**Temperatura:** {temperatura}°C", color=discord.Color.teal())
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="orario", description="Mostra l'orario RP attuale")
+async def orario(interaction: discord.Interaction):
+    ora = random.randint(0, 23)
+    minuti = random.randint(0, 59)
+    orario_str = f"{ora:02d}:{minuti:02d}"
+    periodo = "Notte" if 22 <= ora or ora < 6 else "Mattina" if 6 <= ora < 12 else "Pomeriggio" if 12 <= ora < 18 else "Sera"
+    embed = discord.Embed(title="🕒 Orario RP", description=f"Sono le **{orario_str}** ({periodo})", color=discord.Color.purple())
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="disturbo", description="Simula un disturbo alla radio/telefono (per RP)")
+async def disturbo(interaction: discord.Interaction):
+    disturbi = [
+        "*ksshhh* Pronto? Mi senti? *ksshhh*",
+        "*bzzzt* La ricezione qui è pessima...",
+        "*frrrr* Non capisco, ripeti! *frrrr*",
+        "*click* ...segnale perso..."
+    ]
+    embed = discord.Embed(title="📡 Disturbo Radio", description=random.choice(disturbi), color=discord.Color.light_gray())
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="documenti_falsi", description="Crea documenti falsi (per RP criminali)")
+@app_commands.describe(nome="Nome falso", cognome="Cognome falso", eta="Età falsa")
+async def documenti_falsi(interaction: discord.Interaction, nome: str, cognome: str, eta: int):
+    user_id = str(interaction.user.id)
+    controlla_utente(user_id)
+    if "documenti" not in database[user_id] or not database[user_id]["documenti"]:
+        await interaction.response.send_message("❌ Devi prima creare i tuoi documenti veri con `/crea_documenti`.", ephemeral=True)
+        return
+        
+    database[user_id]["documenti_falsi"] = {
+        "nome": nome,
+        "cognome": cognome,
+        "eta": eta
+    }
+    salva_database()
+    await interaction.response.send_message(f"📄 Documenti falsi creati per **{nome} {cognome}**, {eta} anni.", ephemeral=True)
+
+@bot.tree.command(name="urlo", description="Grida qualcosa nel canale")
+@app_commands.describe(messaggio="Cosa vuoi gridare?")
+async def urlo(interaction: discord.Interaction, messaggio: str):
+    embed = discord.Embed(title="📢 URLO", description=f"**{interaction.user.mention} grida:** {messaggio.upper()}!", color=discord.Color.red())
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="sussurra", description="Sussurra qualcosa a un giocatore")
+@app_commands.describe(utente="A chi vuoi sussurrare?", messaggio="Cosa vuoi dire?")
+async def sussurra(interaction: discord.Interaction, utente: discord.User, messaggio: str):
+    embed = discord.Embed(title="🤫 Sussurro", description=f"**{interaction.user.mention} sussurra a {utente.mention}:** _{messaggio}_", color=discord.Color.light_grey())
+    await interaction.response.send_message(embed=embed)
+
+# ==========================================
+# 18. COMANDI ADMIN EXTRA (AGGIUNTI DA ME)
+# ==========================================
+
+@bot.tree.command(name="force_save", description="[ADMIN] Forza il salvataggio del database")
+@app_commands.checks.has_permissions(administrator=True)
+async def force_save(interaction: discord.Interaction):
+    salva_database()
+    await interaction.response.send_message("✅ Database salvato manualmente.", ephemeral=True)
+
+@bot.tree.command(name="reset_database", description="[ADMIN] Resetta COMPLETAMENTE il database (USARE CON CAUTELA)")
+@app_commands.checks.has_permissions(administrator=True)
+async def reset_database(interaction: discord.Interaction):
+    global database
+    database = {
+        "SETTINGS": {
+            "valuta": "€",
+            "tassa_servizi": 50,
+            "stipendio_base": 100
+        },
+        "STORE": {
+            "telefono": {"prezzo": 500, "descrizione": "Un telefono cellulare di ultima generazione"},
+            "pane": {"prezzo": 10, "descrizione": "Ripristina un po' di fame"},
+            "acqua": {"prezzo": 5, "descrizione": "Dissetante"},
+            "grimaldello": {"prezzo": 250, "descrizione": "Utile per scassinare veicoli"},
+            "maschera": {"prezzo": 150, "descrizione": "Nasconde parzialmente l'identità"},
+            "benda": {"prezzo": 30, "descrizione": "Cura piccole ferite"},
+            "kit_riparazione": {"prezzo": 400, "descrizione": "Ripara un veicolo danneggiato"},
+            "sim": {"prezzo": 100, "descrizione": "Scheda SIM vergine"},
+            "zaino": {"prezzo": 1000, "descrizione": "Aumenta la capacità di inventario"},
+            "radio": {"prezzo": 750, "descrizione": "Per comunicare con la tua gang"},
+            "torcia": {"prezzo": 50, "descrizione": "Illumina le zone buie"},
+            "tanica": {"prezzo": 80, "descrizione": "Tanica piena di benzina"}
+        },
+        "MERCATO": {},
+        "JOBS": ["Disoccupato", "Meccanico", "Polizia", "Medico", "Concessionario"]
+    }
+    salva_database()
+    await interaction.response.send_message("⚠️ **Database completamente resettato!** Tutti i giocatori sono stati eliminati.")
+
+@bot.tree.command(name="player_info", description="[ADMIN] Mostra TUTTE le info di un giocatore")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(utente="Il giocatore di cui vedere le info")
+async def player_info(interaction: discord.Interaction, utente: discord.User):
+    target_id = str(utente.id)
+    controlla_utente(target_id)
+    data = database[target_id]
+    embed = discord.Embed(title=f"🔍 Info Complete: {utente.display_name}", color=discord.Color.blue())
+    embed.add_field(name="💰 Contanti", value=f"{data.get('contanti', 0)}€", inline=True)
+    embed.add_field(name="🏦 Banca", value=f"{data.get('banca', 0)}€", inline=True)
+    embed.add_field(name="💼 Lavoro", value=data.get('lavoro', 'N/D'), inline=True)
+    embed.add_field(name="🚔 Multe", value=f"{data.get('multe', 0)}€", inline=True)
+    embed.add_field(name="🔗 Ammanettato", value="Sì" if data.get('ammanettato') else "No", inline=True)
+    embed.add_field(name="⚠️ Avvisi/Warn/Ban", value=f"{data.get('avvisi', 0)}/{data.get('warn', 0)}/{'Sì' if data.get('ban') else 'No'}", inline=True)
+    veicoli = ", ".join([f"{v['modello']} ({v['targa']})" for v in data.get('veicoli', [])]) or "Nessuno"
+    embed.add_field(name="🚗 Veicoli", value=veicoli, inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ==========================================
 # GESTIONE ERRORI GLOBALE
